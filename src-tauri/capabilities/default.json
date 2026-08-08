@@ -1,0 +1,43 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities required by the ClipFlow Studio Control Deck window.",
+  "windows": ["main", "trimmer"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-set-always-on-top",
+    "core:event:default",
+    "core:app:default",
+    "core:path:default",
+    "core:webview:allow-create-webview-window",
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered",
+    "opener:default",
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "notification:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$VIDEO/ClipFlow/**" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$VIDEO/ClipFlow/**" }]
+    },
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$VIDEO/ClipFlow/**" }]
+    }
+  ]
+}

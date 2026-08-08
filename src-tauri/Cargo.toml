@@ -1,0 +1,108 @@
+[package]
+name = "clipflow"
+version = "1.0.0"
+description = "ClipFlow - zero-bloat, privacy-first instant replay & game clipping for Windows"
+authors = ["ClipFlow Contributors"]
+license = "MIT"
+repository = "https://github.com/clipflow/clipflow"
+edition = "2021"
+rust-version = "1.77.2"
+
+# The library is what Tauri v2 builds; `main.rs` is a 6-line shim so that the
+# same crate can be consumed by integration tests / benches.
+[lib]
+name = "clipflow_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.4", features = [] }
+
+[dependencies]
+# ---------------------------------------------------------------- Tauri core
+tauri = { version = "2.1.1", features = [
+    "tray-icon",
+    "image-png",
+    "protocol-asset",
+    "devtools",
+] }
+tauri-plugin-global-shortcut = "2.0.1"
+tauri-plugin-opener = "2.2.2"
+tauri-plugin-dialog = "2.0.4"
+tauri-plugin-fs = "2.0.3"
+tauri-plugin-notification = "2.0.1"
+
+# ---------------------------------------------------------- Serialization/IO
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+tokio = { version = "1.42.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+# ------------------------------------------------------------ Sync / plumbing
+parking_lot = "0.12.3"
+crossbeam-channel = "0.5.13"
+once_cell = "1.20.2"
+thiserror = "2.0.6"
+log = "0.4.22"
+env_logger = "0.11.5"
+chrono = { version = "0.4.39", features = ["clock"] }
+base64 = "0.22.1"
+
+# Thumbnail encoding only - no decoders pulled in, keeps the binary tiny.
+image = { version = "0.25.5", default-features = false, features = ["png"] }
+
+# ------------------------------------------------- Windows Graphics / Media
+# Everything below is compiled only on Windows targets. The feature list is
+# deliberately narrow so link time and binary size stay minimal.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Performance",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Memory",
+    "Win32_System_Variant",
+    "Win32_System_SystemInformation",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
+]
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.58.0"
+
+[features]
+# Allows `cargo run --features headless-sim` on non-Windows dev machines: the
+# capture engine falls back to a deterministic synthetic pipeline so the whole
+# IPC surface (and therefore the UI) stays testable on macOS/Linux CI.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+headless-sim = []
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+opt-level = "s"     # size first - ClipFlow ships as a single ~6 MB exe
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
