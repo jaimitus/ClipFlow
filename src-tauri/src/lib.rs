@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
@@ -226,26 +226,28 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 if let Some(state) = app.try_state::<AppState>() {
                     state.engine.stop();
                 }
-                app.exit(0);
+                std::process::exit(0);
             }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.set_focus();
-                    } else {
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    ..
+                }
+                | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    let app = tray.app_handle();
+                    if let Some(w) = app.get_webview_window("main") {
                         let _ = w.show();
+                        let _ = w.unminimize();
                         let _ = w.set_focus();
                     }
                 }
+                _ => {}
             }
         });
 

@@ -228,6 +228,15 @@ export default function SettingsPanel({
             OPEN
           </button>
         </Row>
+
+        <Row label="Exit application" hint="Completely stops the GPU buffer and exits process.">
+          <button
+            onClick={() => void clipflow.quit()}
+            className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-rose-200 transition hover:bg-rose-500/25"
+          >
+            QUIT CLIPFLOW
+          </button>
+        </Row>
       </section>
 
       <section className="panel rounded-2xl p-4">

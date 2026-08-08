@@ -453,10 +453,9 @@ pub fn hide_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn quit_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub fn quit_app(state: State<'_, AppState>) -> Result<(), String> {
     state.engine.stop();
-    app.exit(0);
-    Ok(())
+    std::process::exit(0);
 }
 
 #[derive(Debug, Clone, Serialize)]

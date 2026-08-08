@@ -48,24 +48,31 @@ export default function TitleBar({ armed, native, version }: Props) {
       <div className="no-drag flex items-center gap-1">
         <button
           onClick={() => void clipflow.minimize()}
-          className="grid h-7 w-9 place-items-center rounded text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
+          className="grid h-7 w-8 place-items-center rounded text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
           title="Minimize"
         >
           –
         </button>
         <button
           onClick={() => void clipflow.toggleMaximize()}
-          className="grid h-7 w-9 place-items-center rounded text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
+          className="grid h-7 w-8 place-items-center rounded text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
           title="Maximize"
         >
           ▢
         </button>
         <button
           onClick={() => void clipflow.hideToTray()}
-          className="grid h-7 w-9 place-items-center rounded text-slate-400 transition hover:bg-rose-500/20 hover:text-rose-200"
+          className="grid h-7 w-8 place-items-center rounded text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
           title="Hide to tray (buffer keeps running)"
         >
           ✕
+        </button>
+        <button
+          onClick={() => void clipflow.quit()}
+          className="grid h-7 w-8 place-items-center rounded text-rose-400/80 transition hover:bg-rose-500/20 hover:text-rose-200"
+          title="Quit ClipFlow completely"
+        >
+          ⏻
         </button>
       </div>
     </header>
