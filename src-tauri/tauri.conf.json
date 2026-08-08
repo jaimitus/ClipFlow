@@ -35,12 +35,6 @@
         "enable": true,
         "scope": ["$VIDEO/ClipFlow/**", "$HOME/Videos/ClipFlow/**"]
       }
-    },
-    "trayIcon": {
-      "id": "clipflow-tray",
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": false,
-      "tooltip": "ClipFlow — buffer armed (Alt + C)"
     }
   },
   "bundle": {

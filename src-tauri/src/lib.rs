@@ -167,9 +167,6 @@ pub fn run() {
 
 /// Tray menu: everything you need mid-game without alt-tabbing.
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    if app.tray_by_id("clipflow-tray").is_some() {
-        return Ok(());
-    }
     let save = MenuItem::with_id(app, "save", "Save replay\tAlt+C", true, None::<&str>)?;
     let last30 = MenuItem::with_id(app, "save30", "Save last 30 s", true, None::<&str>)?;
     let toggle = MenuItem::with_id(app, "toggle", "Arm / disarm buffer", true, None::<&str>)?;
