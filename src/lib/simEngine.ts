@@ -73,6 +73,7 @@ export class SimEngine {
   targetFps = FPS;
   bitrateKbps = 12_000;
   codec: "h264" | "hevc" = "h264";
+  organizeByGame = true;
 
   private profiles: CaptureProfile[] = [
     {
@@ -361,7 +362,10 @@ export class SimEngine {
   }
 
   /** Flush: assemble the oldest leg into a playable blob. */
-  async save(maxSeconds?: number): Promise<{ clip: ClipMetadata; flushMs: number }> {
+  async save(
+    maxSeconds?: number,
+    gameOverride?: string,
+  ): Promise<{ clip: ClipMetadata; flushMs: number }> {
     if (!this.running) throw new Error("Buffer is not armed — press ARM BUFFER first.");
     const t0 = performance.now();
     const leg = this.legs[0];
@@ -397,9 +401,16 @@ export class SimEngine {
     ).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
     const fileName = `ClipFlow_${stamp}.mp4`;
 
+    // Per-game tag mirrors the native subfolder behaviour.
+    const game = this.organizeByGame
+      ? (gameOverride ?? this.foregroundGame()?.exe.replace(/\.exe$/i, "") ?? null)
+      : null;
+
     const clip: ClipMetadata = {
       id: `${fileName}-${Date.now()}`,
-      path: `C:\\Users\\You\\Videos\\ClipFlow\\${fileName}`,
+      path: game
+        ? `C:\\Users\\You\\Videos\\ClipFlow\\${game}\\${fileName}`
+        : `C:\\Users\\You\\Videos\\ClipFlow\\${fileName}`,
       file_name: fileName,
       title: `Clip ${stamp.replace("_", " ")}`,
       duration_seconds: duration,
@@ -409,6 +420,7 @@ export class SimEngine {
       height: 1080,
       fps: this.targetFps,
       has_audio: true,
+      game,
       thumbnail: this.canvas ? this.canvas.toDataURL("image/jpeg", 0.62) : null,
       preview_url: url,
     };

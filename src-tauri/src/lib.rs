@@ -198,6 +198,7 @@ pub fn run() {
             commands::set_profile_map,
             commands::apply_profile,
             commands::cleanup_old_clips,
+            commands::set_hud_visible,
             commands::set_save_hotkey,
             commands::set_toggle_hotkey,
             commands::open_releases_page,

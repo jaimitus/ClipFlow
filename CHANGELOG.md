@@ -2,6 +2,17 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-08-09
+
+### Added
+
+- **🏷️ Clips tagged with their game** — every save is tagged with the game in the foreground (`cs2`, `eldenring`...). The tag survives restarts because it is derived from the clip's folder, no sidecar files. The gallery gains a per-game **filter dropdown** and each card shows a game badge.
+- **📁 Per-game folders** — with *Organize clips by game* on, clips land in `Videos/ClipFlow/<game>/`. The library scan is recursive, so old root clips and new sub-folder clips appear together. Stats and cleanup cover the whole tree.
+- **📊 Stats dashboard** — a new **STATS** tab: total clips, storage used, this-week counters, games tagged, plus a per-game breakdown with bytes bars.
+- **🖥️ On-screen REC HUD** — an always-on-top, click-through indicator (● REC · buffered seconds) pinned to the corner of the screen while the buffer is armed. Toggle in Settings → Workflow.
+- **✂️ Split at playhead** — the trimmer can cut a clip in two at the current frame (two stream-copy trims, no re-encode) with the new **SPLIT AT PLAYHEAD** button.
+- **💾 Auto-save on game exit** — when the focused game closes or loses focus (10 s minimum focus, 60 s cooldown), the last 30 s are saved automatically and tagged with the game that just left.
+
 ## [1.1.3] - 2026-08-09
 
 ### Added

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BufferStatusCard from "./components/BufferStatusCard";
 import ClipTrimmerModal from "./components/ClipTrimmerModal";
 import GalleryGrid from "./components/GalleryGrid";
+import HudOverlay from "./components/HudOverlay";
 import ProfilesPanel from "./components/ProfilesPanel";
 import SettingsPanel from "./components/SettingsPanel";
+import StatsPanel from "./components/StatsPanel";
 import TitleBar from "./components/TitleBar";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -24,7 +26,11 @@ import type {
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.2.0";
+
+/** The dedicated HUD window loads the same bundle with ?hud=1. */
+const IS_HUD =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hud");
 
 const IDLE_STATS: EngineStats = {
   state: "idle",
@@ -74,13 +80,16 @@ const TONE_STYLES: Record<ToastTone, string> = {
 type SortKey = "newest" | "oldest" | "largest" | "smallest" | "longest" | "shortest";
 
 export default function App() {
+  if (IS_HUD) {
+    return <HudOverlay />;
+  }
   const [stats, setStats] = useState<EngineStats>(IDLE_STATS);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [clips, setClips] = useState<ClipMetadata[]>([]);
   const [loadingClips, setLoadingClips] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"pipeline" | "profiles" | "settings">("pipeline");
+  const [tab, setTab] = useState<"pipeline" | "profiles" | "stats" | "settings">("pipeline");
   const [activeClip, setActiveClip] = useState<ClipMetadata | null>(null);
   const [activeFlushMs, setActiveFlushMs] = useState<number | undefined>(undefined);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -88,6 +97,7 @@ export default function App() {
   const [sessionSaves, setSessionSaves] = useState(0);
   const [sessionBytes, setSessionBytes] = useState(0);
   const [query, setQuery] = useState("");
+  const [gameFilter, setGameFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [audioOnly, setAudioOnly] = useState(false);
   const [compact, setCompact] = useState(false);
@@ -435,8 +445,12 @@ export default function App() {
   applyProfileRef.current = applyProfile;
   useEffect(() => {
     let cancelled = false;
-    let lastExe: string | null = null;
+    let lastFocusedExe: string | null = null;
+    let focusedSince = Date.now();
+    let lastSwitchExe: string | null = null;
     let lastApplyAt = 0;
+    let lastAutosaveAt = 0;
+
     const tick = async () => {
       if (cancelled) return;
       let game: ForegroundGame | null = null;
@@ -454,9 +468,37 @@ export default function App() {
         return game;
       });
       const exe = game?.exe ?? "";
+
+      // Auto-save when the focused app leaves (game exit). Independent of
+      // profile auto-switching. Needs 10 s of focus (no desktop flicks) and a
+      // 60 s cooldown (no clip spam). The clip is tagged with the game that
+      // just left, which is why the flush carries `lastFocusedExe`.
+      if (
+        lastFocusedExe &&
+        exe !== lastFocusedExe &&
+        settingsRef.current.autosaveOnGameExit
+      ) {
+        const now = Date.now();
+        if (now - focusedSince > 10_000 && now - lastAutosaveAt > 60_000) {
+          lastAutosaveAt = now;
+          try {
+            await clipflow.saveInstantReplay(30, "autosave", lastFocusedExe);
+            pushToast(
+              "ok",
+              "Auto-saved on game exit",
+              `${lastFocusedExe} — last 30 s saved`,
+            );
+          } catch {
+            /* buffer not armed — nothing to auto-save */
+          }
+        }
+      }
+      lastFocusedExe = exe;
+      focusedSince = Date.now();
+
       if (!settingsRef.current.autoSwitchProfiles || !exe) return;
-      if (exe === lastExe) return; // focus unchanged since last poll
-      lastExe = exe;
+      if (exe === lastSwitchExe) return; // focus unchanged since last poll
+      lastSwitchExe = exe;
       const now = Date.now();
       if (now - lastApplyAt < 4000) return; // anti-flap cooldown
       const { profiles, profileMap } = settingsRef.current;
@@ -481,7 +523,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(iv);
     };
-  }, []);
+  }, [pushToast]);
 
   const checkForUpdates = useCallback(async () => {
     if (!native) {
@@ -661,6 +703,28 @@ export default function App() {
     [native, pushToast],
   );
 
+  const splitClip = useCallback(
+    async (splitSeconds: number) => {
+      if (!activeClip) return;
+      setBusy(true);
+      try {
+        const clip = activeClip;
+        const duration = Math.max(clip.duration_seconds, 0.1);
+        const safe = Math.min(Math.max(splitSeconds, 0.2), duration - 0.2);
+        const a = await clipflow.trimClip(clip.path, 0, safe, false);
+        const b = await clipflow.trimClip(clip.path, safe, duration, false);
+        pushToast("ok", "Clip split into 2", `${a.file_name} · ${b.file_name}`);
+        setActiveClip(null);
+        await refreshClips();
+      } catch (e) {
+        pushToast("err", "Split failed", String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [activeClip, pushToast, refreshClips],
+  );
+
   const snapshotClip = useCallback(
     async (clip: ClipMetadata, pngBase64: string) => {
       try {
@@ -704,7 +768,8 @@ export default function App() {
       const matchesQuery =
         !q || c.title.toLowerCase().includes(q) || c.file_name.toLowerCase().includes(q);
       const matchesAudio = !audioOnly || c.has_audio;
-      return matchesQuery && matchesAudio;
+      const matchesGame = gameFilter === "all" || c.game === gameFilter;
+      return matchesQuery && matchesAudio && matchesGame;
     });
     const sorted = [...list];
     switch (sortKey) {
@@ -727,12 +792,29 @@ export default function App() {
         sorted.sort((a, b) => b.created_unix_ms - a.created_unix_ms);
     }
     return sorted;
-  }, [clips, query, audioOnly, sortKey]);
+  }, [clips, query, audioOnly, gameFilter, sortKey]);
 
   const totalBytes = useMemo(
     () => clips.reduce((acc, c) => acc + c.size_bytes, 0),
     [clips],
   );
+
+  const games = useMemo(
+    () => [...new Set(clips.map((c) => c.game).filter((g): g is string => !!g))].sort(),
+    [clips],
+  );
+
+  // Keep the always-on-top HUD in sync with the armed state + the setting.
+  // Only calls the backend when the visible-state actually flips.
+  const lastHudVisible = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!native) return;
+    const shouldShow = armed && settings.hudEnabled;
+    if (lastHudVisible.current !== shouldShow) {
+      lastHudVisible.current = shouldShow;
+      void clipflow.setHudVisible(shouldShow);
+    }
+  }, [armed, settings.hudEnabled, native]);
 
   const flushStats = useMemo(() => {
     const h = flushHistory;
@@ -781,6 +863,19 @@ export default function App() {
                     placeholder="Filter clips…"
                     className="w-40 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
                   />
+                  <select
+                    value={gameFilter}
+                    onChange={(e) => setGameFilter(e.target.value)}
+                    title="Filter by game"
+                    className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 font-mono text-[11px] text-slate-300 outline-none transition hover:border-white/25 focus:border-cyan-300/50"
+                  >
+                    <option value="all" className="bg-[#0a0d1a]">ALL GAMES</option>
+                    {games.map((g) => (
+                      <option key={g} value={g} className="bg-[#0a0d1a]">
+                        {g.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     value={sortKey}
                     onChange={(e) => setSortKey(e.target.value as SortKey)}
@@ -975,19 +1070,19 @@ export default function App() {
               )}
             </section>
 
-            <div className="flex gap-2">
-              {(["pipeline", "profiles", "settings"] as const).map((t) => (
+            <div className="grid grid-cols-4 gap-1.5">
+              {(["pipeline", "profiles", "stats", "settings"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   className={cn(
-                    "flex-1 rounded-lg border px-3 py-2 font-mono text-[11px] tracking-[0.18em] transition",
+                    "rounded-lg border px-1.5 py-2 font-mono text-[10px] tracking-[0.12em] transition",
                     tab === t
                       ? "border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
                       : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
                   )}
                 >
-                  {t === "pipeline" ? "PIPELINE" : t === "profiles" ? "PROFILES" : "SETTINGS"}
+                  {t === "pipeline" ? "PIPELINE" : t === "profiles" ? "PROFILES" : t === "stats" ? "STATS" : "SETTINGS"}
                 </button>
               ))}
             </div>
@@ -1022,6 +1117,8 @@ export default function App() {
                 onSetProfileMap={(map) => void setProfileMap(map)}
                 onRefreshForeground={() => void refreshForeground()}
               />
+            ) : tab === "stats" ? (
+              <StatsPanel clips={clips} />
             ) : (
               <PipelinePanel stats={stats} />
             )}
@@ -1060,6 +1157,7 @@ export default function App() {
           onOpenExternal={() => void openExternalClip(activeClip)}
           onRename={(name) => void renameClip(activeClip, name)}
           onSnapshot={(png) => void snapshotClip(activeClip, png)}
+          onSplit={(t) => void splitClip(t)}
           onDiscard={async () => {
             await deleteClip(activeClip);
             setActiveClip(null);

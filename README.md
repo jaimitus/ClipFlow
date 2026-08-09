@@ -25,11 +25,13 @@
 
 Designed for gamers and creators who demand maximum FPS and instant clipping without background resource hogging, ClipFlow continuously records your active display into a rolling memory buffer directly on your GPU. Pressing `Alt + C` instantly flushes your buffer to an MP4 video file in **under 50 milliseconds**.
 
-> ### 🆕 What's new in **1.1.3**
-> - 🗂️ **Three-tab navigation** (PIPELINE · PROFILES · SETTINGS) — profiles moved to their own tab, Settings got much shorter.
-> - ⚡ **One-click profile switch** on the deck (Default / Competitivo / Cine chips) + **Windows toast** when auto-switch changes your profile.
-> - 🖥️ **Launch at startup** hidden to tray, and 🧹 **auto cleanup** of clips older than 7/14/30/60 days.
-> - Everything from 1.1.2 & 1.1.0: per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC, snapshots and more.
+> ### 🆕 What's new in **1.2.0**
+> - 🏷️ **Game-tagged clips** — every save is tagged with the game in focus; filter the gallery by game and see per-game stats.
+> - 📁 **Per-game folders** — clips land in `Videos/ClipFlow/<game>/`; the library, stats and cleanup work across the whole tree.
+> - 📊 **STATS tab** — totals, this-week counters and a per-game breakdown with bars.
+> - 🖥️ **REC HUD overlay** — an always-on-top, click-through indicator while the buffer is armed.
+> - ✂️ **Split at playhead** in the trimmer + 💾 **auto-save on game exit** (last 30 s when a game closes).
+> - Everything from 1.1.3, 1.1.2 & 1.1.0: three-tab nav, per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC and more.
 >
 > Full list in [CHANGELOG.md](CHANGELOG.md).
 
@@ -39,6 +41,9 @@ Designed for gamers and creators who demand maximum FPS and instant clipping wit
 
 - **⚡ Sub-50ms Instant Clip Flush:** Snapshot your last 30–120 seconds of gameplay to `%USERPROFILE%\Videos\ClipFlow` in under 50 ms. Zero rendering queues or waiting.
 - **🎮 Per-Game Capture Profiles:** Define a few generic presets (Default / Competitivo / Cine) and map foreground games to them — `cs2.exe` → *Competitivo*, `eldenring.exe` → *Cine*, everything else falls back to *Default*. Auto-switch on focus change, buffer applies live, the rest on engine restart.
+- **🏷️ Game-Tagged Clips & Folders:** Every save is tagged with the game in the foreground and (optionally) routed into `Videos/ClipFlow/<game>/`. Filter the gallery by game, read per-game stats in the STATS tab, and auto-save the last 30 s whenever a game exits focus.
+- **🖥️ On-Screen REC HUD:** While the buffer is armed, a click-through always-on-top indicator (● REC · elapsed) stays pinned to the corner of your screen — no alt-tabbing to check the deck.
+- **✂️ Split at Playhead:** The trimmer can cut a clip in two at any frame with a single click (two lossless stream-copy trims).
 - **⌨️ Fully Customisable Hotkeys:** Rebind save and arm/disarm from the UI — click, press, done. Persisted in one JSON file.
 - **🎞️ H.264 or HEVC (H.265):** Pick your codec; HEVC cuts storage in half while staying fully hardware-accelerated.
 - **🖥️ DXGI Desktop Duplication & Direct3D 11:** Zero-copy GPU surface acquisition at 60–144 FPS with sub-millisecond frame latency.
@@ -72,9 +77,9 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 
 ### 1. Download & Run
 Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.1.3_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.1.3_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.1.3_x64_en-US.msi` (Windows Installer)
+- **Standalone Portable:** `ClipFlow_v1.2.0_Portable.exe` (Single executable, no installation needed)
+- **Setup Installer:** `ClipFlow_1.2.0_x64-setup.exe` (NSIS Installer)
+- **MSI Package:** `ClipFlow_1.2.0_x64_en-US.msi` (Windows Installer)
 
 > 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 

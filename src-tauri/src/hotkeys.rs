@@ -120,6 +120,11 @@ pub fn trigger_save(app: AppHandle) {
         }
 
         let open_trimmer = state.settings.read().open_trimmer_after_save;
+
+        // Per-game organisation (same rule as the UI save path).
+        let game_folder = crate::commands::resolve_game_folder(&state, None);
+        state.engine.set_output_subfolder(game_folder.clone());
+
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = match flush_lock.try_lock() {
                 Some(g) => g,
@@ -158,6 +163,7 @@ pub fn trigger_save(app: AppHandle) {
                     height: write.height,
                     fps: write.fps,
                     has_audio: write.has_audio,
+                    game: game_folder,
                     thumbnail,
                 };
 

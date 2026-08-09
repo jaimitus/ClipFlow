@@ -138,6 +138,8 @@ pub struct RecorderConfig {
     pub capture_system_audio: bool,
     pub capture_microphone: bool,
     pub output_dir: PathBuf,
+    /// Per-game subfolder the next flush lands in (None = output root).
+    pub output_subfolder: Option<String>,
 }
 
 impl Default for RecorderConfig {
@@ -153,6 +155,7 @@ impl Default for RecorderConfig {
             capture_system_audio: true,
             capture_microphone: false,
             output_dir: default_output_dir(),
+            output_subfolder: None,
         }
     }
 }
@@ -687,6 +690,12 @@ impl CaptureEngine {
         self.config.write().output_dir = dir;
     }
 
+    /// Routes Alt+C flushes into `output_dir/<sub>/` (per-game folders). The
+    /// commands layer recomputes this on every save, so it can never go stale.
+    pub fn set_output_subfolder(&self, sub: Option<String>) {
+        self.config.write().output_subfolder = sub;
+    }
+
     pub fn simulate_device_loss(&self) {
         self.shared.force_device_reset.store(true, Ordering::Release);
     }
@@ -722,8 +731,12 @@ impl CaptureEngine {
             "ClipFlow_{}.mp4",
             chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
         );
-        let path = cfg.output_dir.join(&file_name);
-        std::fs::create_dir_all(&cfg.output_dir)?;
+        let out_dir = match &cfg.output_subfolder {
+            Some(sub) => cfg.output_dir.join(sub),
+            None => cfg.output_dir.clone(),
+        };
+        let path = out_dir.join(&file_name);
+        std::fs::create_dir_all(&out_dir)?;
 
         let duration_hns = match (video.first(), video.last()) {
             (Some(a), Some(b)) => (b.pts_hns + b.duration_hns - a.pts_hns).max(0),

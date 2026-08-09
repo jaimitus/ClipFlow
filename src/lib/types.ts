@@ -63,6 +63,8 @@ export interface ClipMetadata {
   height: number;
   fps: number;
   has_audio: boolean;
+  /** Per-game folder tag (e.g. "cs2"), null for clips at the output root. */
+  game: string | null;
   thumbnail: string | null;
   /** Browser-simulation only: object URL for the preview player. */
   preview_url?: string;
@@ -120,6 +122,12 @@ export interface AppSettings {
   launchAtStartup: boolean;
   /** Delete clips older than N days at launch (0 = keep everything). */
   autoCleanupDays: number;
+  /** Save clips into per-game subfolders and tag them with the game. */
+  organizeByGame: boolean;
+  /** When the foreground game leaves focus, save its last 30 s automatically. */
+  autosaveOnGameExit: boolean;
+  /** Show the always-on-top recording indicator while armed. */
+  hudEnabled: boolean;
 }
 
 /** One per-game capture preset. `id` is a stable slug like "competitivo". */

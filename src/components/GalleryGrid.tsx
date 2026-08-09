@@ -120,6 +120,12 @@ function ClipCard({
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#05060d] via-transparent to-transparent" />
 
+        {clip.game && (
+          <span className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-lime-200">
+            {clip.game.toUpperCase()}
+          </span>
+        )}
+
         <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-cyan-200">
           {formatDuration(clip.duration_seconds)}
         </span>

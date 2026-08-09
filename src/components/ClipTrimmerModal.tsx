@@ -22,6 +22,8 @@ interface Props {
   onRename: (newName: string) => Promise<void> | void;
   /** Current frame → PNG data URL (hardware decode on native). */
   onSnapshot: (pngBase64: string) => Promise<void> | void;
+  /** Cuts the clip in two at the playhead (two stream-copy trims). */
+  onSplit: (splitSeconds: number) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onClose: () => void;
 }
@@ -38,6 +40,7 @@ export default function ClipTrimmerModal({
   onOpenExternal,
   onRename,
   onSnapshot,
+  onSplit,
   onDiscard,
   onClose,
 }: Props) {
@@ -548,6 +551,14 @@ export default function ClipTrimmerModal({
               className="no-drag rounded-lg border border-fuchsia-300/50 bg-fuchsia-500/15 px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/25 disabled:opacity-50"
             >
               COPY VIDEO
+            </button>
+            <button
+              onClick={() => run("Splitting at playhead…", () => onSplit(playhead))}
+              disabled={busy || playhead < 0.2 || playhead > duration - 0.2}
+              title="Cut the clip in two at the playhead (stream copy, no re-encode)"
+              className="no-drag rounded-lg border border-amber-300/50 bg-amber-400/10 px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.14em] text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-50"
+            >
+              ✂ SPLIT AT PLAYHEAD
             </button>
             <button
               onClick={() => run("Trimming (stream copy)…", () => onSaveTrimmed(start, end))}

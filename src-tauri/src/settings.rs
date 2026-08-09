@@ -69,6 +69,19 @@ pub struct Settings {
     /// Delete clips older than N days at launch (0 = keep everything).
     #[serde(default)]
     pub auto_cleanup_days: u32,
+    /// Save clips into per-game subfolders and tag them with the game.
+    #[serde(default = "default_true")]
+    pub organize_by_game: bool,
+    /// When the foreground game leaves focus, save its last 30 s automatically.
+    #[serde(default)]
+    pub autosave_on_game_exit: bool,
+    /// Show the small always-on-top recording indicator while armed.
+    #[serde(default)]
+    pub hud_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -94,6 +107,9 @@ impl Default for Settings {
             auto_switch_profiles: false,
             launch_at_startup: false,
             auto_cleanup_days: 0,
+            organize_by_game: true,
+            autosave_on_game_exit: false,
+            hud_enabled: false,
         }
     }
 }
@@ -188,6 +204,7 @@ impl Settings {
             capture_system_audio: self.capture_system_audio,
             capture_microphone: self.capture_microphone,
             output_dir: PathBuf::from(&self.output_dir),
+            output_subfolder: None,
         }
     }
 

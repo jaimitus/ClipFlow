@@ -322,6 +322,27 @@ export default function SettingsPanel({
           />
         </Row>
 
+        <Row label="Organize clips by game" hint="Saves clips into Videos/ClipFlow/<game>/ subfolders and tags them with the game in focus.">
+          <Toggle
+            on={settings.organizeByGame}
+            onClick={() => onChange({ organizeByGame: !settings.organizeByGame })}
+          />
+        </Row>
+
+        <Row label="Auto-save when a game closes" hint="When the focused game leaves the foreground, the last 30 s are saved automatically and tagged with that game.">
+          <Toggle
+            on={settings.autosaveOnGameExit}
+            onClick={() => onChange({ autosaveOnGameExit: !settings.autosaveOnGameExit })}
+          />
+        </Row>
+
+        <Row label="Overlay HUD" hint="A small always-on-top indicator (● REC) appears while the buffer is armed. Click-through, never steals focus.">
+          <Toggle
+            on={settings.hudEnabled}
+            onClick={() => onChange({ hudEnabled: !settings.hudEnabled })}
+          />
+        </Row>
+
         <Row label="Launch at startup" hint="Starts ClipFlow hidden to tray when you sign in to Windows.">
           <Toggle
             on={settings.launchAtStartup}

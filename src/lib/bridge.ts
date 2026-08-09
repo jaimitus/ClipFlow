@@ -163,6 +163,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSwitchProfiles: false,
   launchAtStartup: false,
   autoCleanupDays: 0,
+  organizeByGame: true,
+  autosaveOnGameExit: false,
+  hudEnabled: false,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -204,15 +207,24 @@ export const clipflow = {
     browserSettings = { ...browserSettings, bufferSeconds: seconds };
   },
 
-  /** The Alt+C flush. Returns the freshly written clip. */
+  /**
+   * The Alt+C flush. Returns the freshly written clip. `gameOverride` tags the
+   * clip to a specific game (used by auto-save-on-game-exit, when the game is
+   * no longer focused at flush time).
+   */
   async saveInstantReplay(
     maxSeconds?: number,
     triggeredBy: string = "ui",
+    gameOverride?: string,
   ): Promise<ClipMetadata> {
     if (isTauri()) {
-      return invoke<ClipMetadata>("save_instant_replay", { maxSeconds, triggeredBy });
+      return invoke<ClipMetadata>("save_instant_replay", {
+        maxSeconds,
+        triggeredBy,
+        gameOverride,
+      });
     }
-    const { clip, flushMs } = await simEngine.save(maxSeconds);
+    const { clip, flushMs } = await simEngine.save(maxSeconds, gameOverride);
     emitLocal<ClipSavedPayload>(CHANNELS.clipSaved, { clip, flushMs, triggeredBy });
     return clip;
   },
@@ -437,6 +449,13 @@ export const clipflow = {
   async cleanupOldClips(days: number): Promise<number> {
     if (isTauri()) return invoke<number>("cleanup_old_clips", { days });
     return simEngine.cleanupOldClips(days);
+  },
+
+  /** Shows/hides the always-on-top recording HUD (native only). */
+  async setHudVisible(visible: boolean): Promise<void> {
+    if (isTauri()) {
+      await invoke("set_hud_visible", { visible });
+    }
   },
 
   /**

@@ -25,6 +25,9 @@ pub struct ClipMetadata {
     pub height: u32,
     pub fps: u32,
     pub has_audio: bool,
+    /// Per-game folder name (relative to the output root), e.g. "cs2". `None`
+    /// for clips saved at the root.
+    pub game: Option<String>,
     /// `data:image/png;base64,...` - inlined so the webview needs no extra
     /// filesystem scope for the gallery.
     pub thumbnail: Option<String>,
@@ -46,11 +49,36 @@ pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMeta
         std::fs::create_dir_all(dir)?;
         return Ok(Vec::new());
     }
-
     let mut clips = Vec::new();
+    scan_into(dir, dir, 0, with_thumbnails, &mut clips)?;
+    clips.sort_by(|a, b| b.created_unix_ms.cmp(&a.created_unix_ms));
+    Ok(clips)
+}
+
+/// Recursive scan (max depth 2: per-game folders). `game` is derived from the
+/// folder name relative to the output root, so clips saved by the per-game
+/// organisation keep their tag across restarts without any sidecar files.
+fn scan_into(
+    root: &Path,
+    dir: &Path,
+    depth: u32,
+    with_thumbnails: bool,
+    out: &mut Vec<ClipMetadata>,
+) -> RResult<()> {
     for entry in std::fs::read_dir(dir)? {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_dir() {
+            if depth < 2 {
+                scan_into(root, &path, depth + 1, with_thumbnails, out)?;
+            }
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+
         let is_video = path
             .extension()
             .and_then(|e| e.to_str())
@@ -80,8 +108,16 @@ pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMeta
             None
         };
 
-        clips.push(ClipMetadata {
-            id: format!("{:x}", fnv1a(file_name.as_bytes()) ^ created_unix_ms as u64),
+        // Per-game tag = the folder name relative to the output root.
+        let game = path
+            .parent()
+            .and_then(|p| p.strip_prefix(root).ok())
+            .filter(|rel| !rel.as_os_str().is_empty())
+            .map(|rel| rel.to_string_lossy().to_string());
+        let id_key = path.to_string_lossy().to_string();
+
+        out.push(ClipMetadata {
+            id: format!("{:x}", fnv1a(id_key.as_bytes()) ^ created_unix_ms as u64),
             path: path.to_string_lossy().to_string(),
             title: pretty_title(&file_name),
             file_name,
@@ -92,12 +128,11 @@ pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMeta
             height: probe.height,
             fps: probe.fps,
             has_audio: probe.has_audio,
+            game,
             thumbnail,
         });
     }
-
-    clips.sort_by(|a, b| b.created_unix_ms.cmp(&a.created_unix_ms));
-    Ok(clips)
+    Ok(())
 }
 
 pub fn delete_clip(path: &Path) -> RResult<()> {

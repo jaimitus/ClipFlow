@@ -135,16 +135,69 @@ pub fn set_buffer_seconds(state: State<'_, AppState>, seconds: u32) -> Result<()
 // The Alt+C path
 // ---------------------------------------------------------------------------
 
+/// Sanitises a foreground exe into a safe per-game folder name. Returns `None`
+/// for our own process so pressing Alt+C on the deck never creates a "clipflow"
+/// folder.
+fn game_folder_name(exe: &str) -> Option<String> {
+    let exe = exe.to_ascii_lowercase();
+    if exe.starts_with("clipflow") {
+        return None;
+    }
+    let stem = match exe.rfind('.') {
+        Some(i) if i > 0 => &exe[..i],
+        _ => exe.as_str(),
+    };
+    let sanitized: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = sanitized.trim_matches('-').to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Resolves the per-game subfolder for the next flush: the game in the
+/// foreground, or `game_override` when the caller already knows the game (the
+/// auto-save-on-game-exit flow). Returns `None` when per-game organisation is
+/// off or no game applies — the clip then lands in the output root.
+pub fn resolve_game_folder(state: &AppState, game_override: Option<&str>) -> Option<String> {
+    let s = state.settings.read();
+    if !s.organize_by_game {
+        return None;
+    }
+    if let Some(g) = game_override {
+        return game_folder_name(g);
+    }
+    crate::foreground::get_foreground_game().and_then(|g| game_folder_name(&g.exe))
+}
+
 /// Flushes the ring buffer to a finalised `.mp4`, then returns its metadata.
 /// `max_seconds` lets the UI (or the tray menu) ask for "last 30 s" out of a
-/// 120 s buffer without re-configuring the engine.
+/// 120 s buffer without re-configuring the engine. `game_override` is used by
+/// the auto-save-on-game-exit flow: the game that just lost focus is tagged
+/// even though it is no longer the foreground process at flush time.
 #[tauri::command]
 pub async fn save_instant_replay(
     state: State<'_, AppState>,
     app: AppHandle,
     max_seconds: Option<f32>,
     triggered_by: Option<String>,
+    game_override: Option<String>,
 ) -> Result<ClipMetadata, String> {
+    // Per-game organisation: route the flush into output_dir/<game>/. The
+    // subfolder is recomputed on every save so it can never go stale.
+    let game_folder = resolve_game_folder(&state, game_override.as_deref());
+    state.engine.set_output_subfolder(game_folder.clone());
+
     let engine = Arc::clone(&state.engine);
     let with_thumb = true;
 
@@ -173,6 +226,7 @@ pub async fn save_instant_replay(
         height: result.height,
         fps: result.fps,
         has_audio: result.has_audio,
+        game: game_folder.clone(),
         thumbnail,
     };
 
@@ -454,6 +508,9 @@ pub struct SettingsPatch {
     pub auto_switch_profiles: Option<bool>,
     pub launch_at_startup: Option<bool>,
     pub auto_cleanup_days: Option<u32>,
+    pub organize_by_game: Option<bool>,
+    pub autosave_on_game_exit: Option<bool>,
+    pub hud_enabled: Option<bool>,
 }
 
 #[tauri::command]
@@ -559,8 +616,52 @@ pub fn update_settings(
     if let Some(v) = patch.auto_cleanup_days {
         s.auto_cleanup_days = v;
     }
+    if let Some(v) = patch.organize_by_game {
+        s.organize_by_game = v;
+    }
+    if let Some(v) = patch.autosave_on_game_exit {
+        s.autosave_on_game_exit = v;
+    }
+    if let Some(v) = patch.hud_enabled {
+        s.hud_enabled = v;
+        if let Some(hud) = app.get_webview_window("hud") {
+            if v {
+                let _ = hud.show();
+            } else {
+                let _ = hud.hide();
+            }
+        }
+    }
     s.save()?;
     Ok(s.clone())
+}
+
+/// Shows / hides the always-on-top recording HUD window. While showing, it is
+/// anchored to the bottom-right corner of the main deck window (the HUD has no
+/// chrome and ignores cursor events, so it never steals focus or clicks).
+#[tauri::command]
+pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    const HUD_W: i32 = 190;
+    const HUD_H: i32 = 44;
+    let Some(hud) = app.get_webview_window("hud") else {
+        return Ok(());
+    };
+    if !visible {
+        let _ = hud.hide();
+        return Ok(());
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        if let (Ok(size), Ok(pos)) = (main.inner_size(), main.outer_position()) {
+            let x = pos.x as i32 + size.width as i32 - HUD_W - 18;
+            let y = pos.y as i32 + size.height as i32 - HUD_H - 18;
+            let _ = hud.set_position(tauri::PhysicalPosition::new(x.max(0), y.max(0)));
+        }
+    }
+    // The HUD is a passive indicator: never grab focus or clicks.
+    let _ = hud.set_ignore_cursor_events(true);
+    let _ = hud.set_always_on_top(true);
+    let _ = hud.show();
+    Ok(())
 }
 
 /// Deletes clips older than `days` from the output folder. Returns how many
