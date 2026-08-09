@@ -180,18 +180,19 @@ pub fn trigger_save(app: AppHandle) {
                 // Never steal focus from a fullscreen game. Raising the deck
                 // mid-match minimises/pauses exclusive-fullscreen games, which
                 // is exactly what the user reported. Only raise ClipFlow when
-                // the user is already looking at it (or the desktop); when a
-                // game is in the foreground, confirm the save with a native
-                // Windows toast instead — toasts do not steal focus.
+                // the foreground is *explicitly* known to be our own window or
+                // the desktop; when a game has focus — or the query fails and
+                // we cannot tell (conservative default) — confirm the save
+                // with a native Windows toast instead, because toasts do not
+                // steal focus.
                 let focused_exe = focused
                     .map(|g| g.exe.to_ascii_lowercase())
                     .unwrap_or_default();
-                let game_in_focus = !focused_exe.starts_with("clipflow")
-                    && !focused_exe.starts_with("explorer")
-                    && !focused_exe.is_empty();
-                let raise_deck = open_trimmer && !game_in_focus;
+                let safe_to_raise =
+                    focused_exe.starts_with("clipflow") || focused_exe.starts_with("explorer");
+                let raise_deck = open_trimmer && safe_to_raise;
 
-                if game_in_focus && open_trimmer {
+                if open_trimmer && !safe_to_raise {
                     use tauri_plugin_notification::NotificationExt;
                     let _ = app
                         .notification()
