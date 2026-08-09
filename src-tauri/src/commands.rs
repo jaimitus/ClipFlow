@@ -8,11 +8,12 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::foreground::ForegroundGame;
 use crate::media::library::{self, ClipMetadata, TrimResult};
 use crate::media::recorder::{
     enumerate_monitors, CaptureEngine, ClipWriteResult, Codec, EngineStats, MonitorInfo,
 };
-use crate::settings::Settings;
+use crate::settings::{CaptureProfile, ProfileMapEntry, Settings};
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -27,9 +28,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        let mut settings = Settings::load();
+        settings.seed_default_profiles();
+        let _ = settings.save(); // persist the stock profiles once
         Self {
             engine: Arc::new(CaptureEngine::new()),
-            settings: RwLock::new(Settings::load()),
+            settings: RwLock::new(settings),
             flush_lock: Arc::new(parking_lot::Mutex::new(())),
         }
     }
@@ -447,6 +451,7 @@ pub struct SettingsPatch {
     pub hotkey_save: Option<String>,
     pub hotkey_toggle: Option<String>,
     pub always_on_top: Option<bool>,
+    pub auto_switch_profiles: Option<bool>,
 }
 
 #[tauri::command]
@@ -533,6 +538,127 @@ pub fn update_settings(
             let _ = w.set_always_on_top(v);
         }
     }
+    if let Some(v) = patch.auto_switch_profiles {
+        s.auto_switch_profiles = v;
+    }
+    s.save()?;
+    Ok(s.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Capture profiles (per-game presets)
+// ---------------------------------------------------------------------------
+
+/// The game currently in the foreground, if any. The UI polls this at ~2 Hz
+/// to drive profile auto-switching. Runs off the main thread because
+/// `GetWindowTextW` sends a cross-process message that can block while a
+/// hung foreground app ignores it.
+#[tauri::command]
+pub async fn get_foreground_game() -> Result<Option<ForegroundGame>, String> {
+    tauri::async_runtime::spawn_blocking(crate::foreground::get_foreground_game)
+        .await
+        .map_err(|e| format!("foreground query panicked: {e}"))
+}
+
+#[tauri::command]
+pub fn get_profiles(state: State<'_, AppState>) -> Result<Vec<CaptureProfile>, String> {
+    Ok(state.settings.read().profiles.clone())
+}
+
+/// Creates or updates a profile (matched by `id`). Returns the full settings
+/// so the UI can re-render from a single source of truth.
+#[tauri::command]
+pub fn save_profile(
+    state: State<'_, AppState>,
+    profile: CaptureProfile,
+) -> Result<Settings, String> {
+    let mut s = state.settings.write();
+    let id = profile.id.trim().to_ascii_lowercase();
+    if id.is_empty() {
+        return Err("profile id cannot be empty".into());
+    }
+    let mut profile = profile;
+    profile.id = id.clone();
+    if profile.name.trim().is_empty() {
+        profile.name = id.clone();
+    } else {
+        profile.name = profile.name.trim().to_string();
+    }
+    profile.buffer_seconds = profile.buffer_seconds.clamp(5, 600);
+    profile.target_fps = profile.target_fps.clamp(24, 240);
+    profile.bitrate_kbps = profile.bitrate_kbps.clamp(1_000, 150_000);
+
+    if let Some(existing) = s.profiles.iter_mut().find(|p| p.id == id) {
+        *existing = profile;
+    } else {
+        s.profiles.push(profile);
+    }
+    s.save()?;
+    Ok(s.clone())
+}
+
+/// Removes a profile and any mappings that pointed at it.
+#[tauri::command]
+pub fn delete_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Settings, String> {
+    let mut s = state.settings.write();
+    let before = s.profiles.len();
+    s.profiles.retain(|p| p.id != profile_id);
+    if s.profiles.len() == before {
+        return Err(format!("profile '{profile_id}' not found"));
+    }
+    s.profile_map.retain(|m| m.profile_id != profile_id);
+    s.save()?;
+    Ok(s.clone())
+}
+
+/// Replaces the whole exe → profile map. Rows with empty exes or unknown
+/// profile ids are dropped; duplicate exes keep the first entry.
+#[tauri::command]
+pub fn set_profile_map(
+    state: State<'_, AppState>,
+    map: Vec<ProfileMapEntry>,
+) -> Result<Settings, String> {
+    let mut s = state.settings.write();
+    let mut seen = std::collections::HashSet::new();
+    let cleaned: Vec<ProfileMapEntry> = map
+        .into_iter()
+        .filter_map(|m| {
+            let exe = m.exe_name.trim().to_ascii_lowercase();
+            if exe.is_empty() || s.profile_by_id(&m.profile_id).is_none() {
+                return None;
+            }
+            if !seen.insert(exe.clone()) {
+                return None;
+            }
+            Some(ProfileMapEntry {
+                profile_id: m.profile_id,
+                exe_name: exe,
+            })
+        })
+        .collect();
+    s.profile_map = cleaned;
+    s.save()?;
+    Ok(s.clone())
+}
+
+/// Applies a profile right now: the buffer window changes live on the running
+/// engine, fps/bitrate/codec are persisted and take effect on the next engine
+/// start (same contract as the APPLY & RESTART ENGINE button).
+#[tauri::command]
+pub fn apply_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Settings, String> {
+    let mut s = state.settings.write();
+    let profile = s
+        .profile_by_id(&profile_id)
+        .cloned()
+        .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
+    s.apply_profile_values(&profile);
+    state.engine.set_buffer_seconds(s.buffer_seconds);
     s.save()?;
     Ok(s.clone())
 }

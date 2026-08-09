@@ -10,10 +10,13 @@
 import { simEngine } from "./simEngine";
 import type {
   AppSettings,
+  CaptureProfile,
   ClipMetadata,
   ClipSavedPayload,
   EngineStats,
+  ForegroundGame,
   MonitorInfo,
+  ProfileMapEntry,
   TrimResult,
 } from "./types";
 
@@ -130,6 +133,34 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autostartBuffer: true,
   playSaveSound: true,
   alwaysOnTop: false,
+  profiles: [
+    {
+      id: "default",
+      name: "Default",
+      bufferSeconds: 60,
+      targetFps: 60,
+      bitrateKbps: 12_000,
+      codec: "h264",
+    },
+    {
+      id: "competitivo",
+      name: "Competitivo",
+      bufferSeconds: 30,
+      targetFps: 60,
+      bitrateKbps: 12_000,
+      codec: "h264",
+    },
+    {
+      id: "cine",
+      name: "Cine",
+      bufferSeconds: 120,
+      targetFps: 60,
+      bitrateKbps: 25_000,
+      codec: "hevc",
+    },
+  ],
+  profileMap: [],
+  autoSwitchProfiles: false,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -340,6 +371,63 @@ export const clipflow = {
     if (isTauri()) return invoke<AppSettings>("update_settings", { patch });
     browserSettings = { ...browserSettings, ...patch };
     if (patch.bufferSeconds) simEngine.setBufferSeconds(patch.bufferSeconds);
+    return browserSettings;
+  },
+
+  // ------------------------------------------------------ capture profiles
+  /**
+   * The game currently in the foreground. Native: Windows focus query. Browser:
+   * a deterministic cycle (cs2 → desktop → dota2 → desktop) so the auto-switch
+   * flow can be demoed without a real game.
+   */
+  async getForegroundGame(): Promise<ForegroundGame | null> {
+    if (isTauri()) return invoke<ForegroundGame | null>("get_foreground_game");
+    return simEngine.foregroundGame();
+  },
+
+  async getProfiles(): Promise<CaptureProfile[]> {
+    if (isTauri()) return invoke<CaptureProfile[]>("get_profiles");
+    return browserSettings.profiles;
+  },
+
+  /** Creates or updates a profile; resolves to the fresh full settings. */
+  async saveProfile(profile: CaptureProfile): Promise<AppSettings> {
+    if (isTauri()) return invoke<AppSettings>("save_profile", { profile });
+    simEngine.saveProfile(profile);
+    browserSettings = { ...browserSettings, profiles: simEngine.getProfiles() };
+    return browserSettings;
+  },
+
+  async deleteProfile(profileId: string): Promise<AppSettings> {
+    if (isTauri()) return invoke<AppSettings>("delete_profile", { profileId });
+    simEngine.deleteProfile(profileId);
+    browserSettings = { ...browserSettings, profiles: simEngine.getProfiles() };
+    return browserSettings;
+  },
+
+  async setProfileMap(map: ProfileMapEntry[]): Promise<AppSettings> {
+    if (isTauri()) return invoke<AppSettings>("set_profile_map", { map });
+    simEngine.setProfileMap(map);
+    browserSettings = { ...browserSettings, profileMap: simEngine.getProfileMap() };
+    return browserSettings;
+  },
+
+  /**
+   * Applies a profile now: the buffer window changes live; fps/bitrate/codec
+   * persist and apply on the next engine start (same contract as APPLY &
+   * RESTART ENGINE).
+   */
+  async applyProfile(profileId: string): Promise<AppSettings> {
+    if (isTauri()) return invoke<AppSettings>("apply_profile", { profileId });
+    simEngine.applyProfile(profileId);
+    const profile = simEngine.getProfiles().find((p) => p.id === profileId);
+    browserSettings = {
+      ...browserSettings,
+      bufferSeconds: simEngine.bufferSeconds,
+      targetFps: simEngine.targetFps,
+      bitrateKbps: simEngine.bitrateKbps,
+      codec: profile?.codec ?? browserSettings.codec,
+    };
     return browserSettings;
   },
 

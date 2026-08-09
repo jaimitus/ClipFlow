@@ -11,7 +11,14 @@
  * routes every call to the Rust IPC commands instead.
  */
 
-import type { ClipMetadata, EngineStats, EngineStateName } from "./types";
+import type {
+  CaptureProfile,
+  ClipMetadata,
+  EngineStats,
+  EngineStateName,
+  ForegroundGame,
+  ProfileMapEntry,
+} from "./types";
 
 type Listener<T> = (payload: T) => void;
 
@@ -65,6 +72,38 @@ export class SimEngine {
   bufferSeconds = 60;
   targetFps = FPS;
   bitrateKbps = 12_000;
+  codec: "h264" | "hevc" = "h264";
+
+  private profiles: CaptureProfile[] = [
+    {
+      id: "default",
+      name: "Default",
+      bufferSeconds: 60,
+      targetFps: 60,
+      bitrateKbps: 12_000,
+      codec: "h264",
+    },
+    {
+      id: "competitivo",
+      name: "Competitivo",
+      bufferSeconds: 30,
+      targetFps: 60,
+      bitrateKbps: 12_000,
+      codec: "h264",
+    },
+    {
+      id: "cine",
+      name: "Cine",
+      bufferSeconds: 120,
+      targetFps: 60,
+      bitrateKbps: 25_000,
+      codec: "hevc",
+    },
+  ];
+  // Pre-mapped so the browser demo can show auto-switch without setup.
+  private profileMap: ProfileMapEntry[] = [
+    { profileId: "competitivo", exeName: "cs2.exe" },
+  ];
 
   // ------------------------------------------------------------------ scene
   private drawScene(t: number) {
@@ -444,6 +483,77 @@ export class SimEngine {
     window.setTimeout(() => {
       this.state = this.running ? "buffering" : "idle";
     }, 1400);
+  }
+
+  // ------------------------------------------------------ capture profiles
+  /**
+   * Deterministic foreground cycle for the browser demo: a mapped game, an
+   * unmapped game, and desktop. Every ~20 s the focus changes, which lets the
+   * auto-switch path be exercised end to end.
+   */
+  foregroundGame(): ForegroundGame | null {
+    const phase = Math.floor(performance.now() / 20_000) % 4;
+    switch (phase) {
+      case 0:
+        return { exe: "cs2.exe", title: "Counter-Strike 2" };
+      case 1:
+        return { exe: "explorer.exe", title: "Program Manager" };
+      case 2:
+        return { exe: "dota2.exe", title: "Dota 2" };
+      default:
+        return { exe: "explorer.exe", title: "Program Manager" };
+    }
+  }
+
+  getProfiles(): CaptureProfile[] {
+    return this.profiles.map((p) => ({ ...p }));
+  }
+
+  getProfileMap(): ProfileMapEntry[] {
+    return this.profileMap.map((m) => ({ ...m }));
+  }
+
+  saveProfile(profile: CaptureProfile) {
+    const id = profile.id.trim().toLowerCase();
+    if (!id) throw new Error("profile id cannot be empty");
+    const clean: CaptureProfile = {
+      ...profile,
+      id,
+      name: profile.name.trim() || id,
+      bufferSeconds: Math.min(600, Math.max(5, profile.bufferSeconds)),
+      targetFps: Math.min(240, Math.max(24, profile.targetFps)),
+      bitrateKbps: Math.min(150_000, Math.max(1_000, profile.bitrateKbps)),
+    };
+    const i = this.profiles.findIndex((p) => p.id === id);
+    if (i >= 0) this.profiles[i] = clean;
+    else this.profiles.push(clean);
+  }
+
+  deleteProfile(profileId: string) {
+    this.profiles = this.profiles.filter((p) => p.id !== profileId);
+    this.profileMap = this.profileMap.filter((m) => m.profileId !== profileId);
+  }
+
+  setProfileMap(map: ProfileMapEntry[]) {
+    const known = new Set(this.profiles.map((p) => p.id));
+    const seen = new Set<string>();
+    this.profileMap = map
+      .filter((m) => {
+        const exe = m.exeName.trim().toLowerCase();
+        if (!exe || !known.has(m.profileId) || seen.has(exe)) return false;
+        seen.add(exe);
+        return true;
+      })
+      .map((m) => ({ profileId: m.profileId, exeName: m.exeName.trim().toLowerCase() }));
+  }
+
+  applyProfile(profileId: string) {
+    const profile = this.profiles.find((p) => p.id === profileId);
+    if (!profile) throw new Error(`profile '${profileId}' not found`);
+    this.bufferSeconds = profile.bufferSeconds;
+    this.targetFps = profile.targetFps;
+    this.bitrateKbps = profile.bitrateKbps;
+    this.codec = profile.codec;
   }
 }
 

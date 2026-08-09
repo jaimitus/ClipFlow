@@ -4,6 +4,7 @@
 //! heartbeat and the IPC surface.
 
 pub mod commands;
+pub mod foreground;
 pub mod hotkeys;
 pub mod media;
 pub mod settings;
@@ -57,7 +58,12 @@ pub fn run() {
                     s.hotkey_save.clone(),
                     s.hotkey_toggle.clone(),
                     s.autostart_buffer,
-                    s.to_recorder_config(),
+                    // If auto-switch is on and the game already in the foreground
+                    // maps to a profile, arm the buffer with that profile's
+                    // capture values from frame zero.
+                    s.active_profile()
+                        .map(|p| s.to_profile_config(p))
+                        .unwrap_or_else(|| s.to_recorder_config()),
                 )
             };
 
@@ -166,6 +172,12 @@ pub fn run() {
             commands::update_settings,
             commands::get_monitors,
             commands::get_output_dir,
+            commands::get_foreground_game,
+            commands::get_profiles,
+            commands::save_profile,
+            commands::delete_profile,
+            commands::set_profile_map,
+            commands::apply_profile,
             commands::set_save_hotkey,
             commands::set_toggle_hotkey,
             commands::open_releases_page,

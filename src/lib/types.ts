@@ -110,6 +110,34 @@ export interface AppSettings {
   playSaveSound: boolean;
   /** Pin the control deck above full-screen games. */
   alwaysOnTop: boolean;
+  /** Per-game capture presets (ShadowPlay style). */
+  profiles: CaptureProfile[];
+  /** Foreground exe → profile mapping (auto-switch). */
+  profileMap: ProfileMapEntry[];
+  /** When on, the mapped profile follows the game that has focus. */
+  autoSwitchProfiles: boolean;
+}
+
+/** One per-game capture preset. `id` is a stable slug like "competitivo". */
+export interface CaptureProfile {
+  id: string;
+  name: string;
+  bufferSeconds: number;
+  targetFps: number;
+  bitrateKbps: number;
+  codec: "h264" | "hevc";
+}
+
+/** Maps a foreground executable (lowercase, e.g. "cs2.exe") to a profile. */
+export interface ProfileMapEntry {
+  profileId: string;
+  exeName: string;
+}
+
+/** The window currently owning focus, as reported by the native backend. */
+export interface ForegroundGame {
+  exe: string;
+  title: string;
 }
 
 /** Live download state surfaced by the auto-updater (About & Updates). */

@@ -6,7 +6,33 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::foreground;
 use crate::media::recorder::{default_output_dir, Codec, RecorderConfig};
+
+/// One per-game capture preset (ShadowPlay style). Applying a profile copies
+/// its capture values into the global settings; the buffer window applies to
+/// the running engine immediately, fps/bitrate/codec on the next engine start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureProfile {
+    /// Stable slug, e.g. "competitivo".
+    pub id: String,
+    pub name: String,
+    pub buffer_seconds: u32,
+    pub target_fps: u32,
+    pub bitrate_kbps: u32,
+    pub codec: Codec,
+}
+
+/// Maps a foreground executable to a profile. Keys on the exe name so the
+/// match is exact and cheap (no fuzzy matching on window titles).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMapEntry {
+    pub profile_id: String,
+    /// Lowercase executable name, e.g. "cs2.exe".
+    pub exe_name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +54,15 @@ pub struct Settings {
     /// Keep the control deck pinned above full-screen games.
     #[serde(default)]
     pub always_on_top: bool,
+    /// Per-game capture profiles. Seeded with three stock presets on first run.
+    #[serde(default)]
+    pub profiles: Vec<CaptureProfile>,
+    /// Foreground exe → profile mapping (auto-switch).
+    #[serde(default)]
+    pub profile_map: Vec<ProfileMapEntry>,
+    /// When true, the mapped profile follows the game that has focus.
+    #[serde(default)]
+    pub auto_switch_profiles: bool,
 }
 
 impl Default for Settings {
@@ -48,11 +83,91 @@ impl Default for Settings {
             autostart_buffer: true,
             play_save_sound: true,
             always_on_top: false,
+            profiles: Vec::new(),
+            profile_map: Vec::new(),
+            auto_switch_profiles: false,
         }
     }
 }
 
 impl Settings {
+    /// Seeds the three stock profiles on first run. The "default" one mirrors
+    /// whatever the user's global capture settings currently are, so applying
+    /// it later is a true "back to my baseline" action.
+    pub fn seed_default_profiles(&mut self) {
+        if !self.profiles.is_empty() {
+            return;
+        }
+        self.profiles = vec![
+            CaptureProfile {
+                id: "default".into(),
+                name: "Default".into(),
+                buffer_seconds: self.buffer_seconds,
+                target_fps: self.target_fps,
+                bitrate_kbps: self.bitrate_kbps,
+                codec: self.codec,
+            },
+            CaptureProfile {
+                id: "competitivo".into(),
+                name: "Competitivo".into(),
+                buffer_seconds: 30,
+                target_fps: 60,
+                bitrate_kbps: 12_000,
+                codec: Codec::H264,
+            },
+            CaptureProfile {
+                id: "cine".into(),
+                name: "Cine".into(),
+                buffer_seconds: 120,
+                target_fps: 60,
+                bitrate_kbps: 25_000,
+                codec: Codec::Hevc,
+            },
+        ];
+    }
+
+    pub fn profile_by_id(&self, id: &str) -> Option<&CaptureProfile> {
+        self.profiles.iter().find(|p| p.id == id)
+    }
+
+    /// The profile mapped to `exe` (case-insensitive match), if any.
+    pub fn profile_for_exe(&self, exe: &str) -> Option<&CaptureProfile> {
+        let exe = exe.to_ascii_lowercase();
+        self.profile_map
+            .iter()
+            .find(|m| m.exe_name.to_ascii_lowercase() == exe)
+            .and_then(|m| self.profile_by_id(&m.profile_id))
+    }
+
+    /// The profile that should be live right now under auto-switch: the one
+    /// mapped to the game currently in the foreground, if any.
+    pub fn active_profile(&self) -> Option<&CaptureProfile> {
+        if !self.auto_switch_profiles {
+            return None;
+        }
+        let game = foreground::get_foreground_game()?;
+        self.profile_for_exe(&game.exe)
+    }
+
+    /// Copies a profile's capture values into the global settings.
+    pub fn apply_profile_values(&mut self, profile: &CaptureProfile) {
+        self.buffer_seconds = profile.buffer_seconds.clamp(5, 600);
+        self.target_fps = profile.target_fps.clamp(24, 240);
+        self.bitrate_kbps = profile.bitrate_kbps.clamp(1_000, 150_000);
+        self.codec = profile.codec;
+    }
+
+    /// RecorderConfig for a specific profile (used at launch when the
+    /// auto-switch profile should be armed from the very first frame).
+    pub fn to_profile_config(&self, profile: &CaptureProfile) -> RecorderConfig {
+        let mut cfg = self.to_recorder_config();
+        cfg.buffer_seconds = profile.buffer_seconds.clamp(5, 600);
+        cfg.target_fps = profile.target_fps.clamp(24, 240);
+        cfg.bitrate_kbps = profile.bitrate_kbps.clamp(1_000, 150_000);
+        cfg.codec = profile.codec;
+        cfg
+    }
+
     pub fn to_recorder_config(&self) -> RecorderConfig {
         RecorderConfig {
             buffer_seconds: self.buffer_seconds.clamp(5, 600),

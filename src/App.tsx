@@ -12,15 +12,18 @@ import { formatBytes, formatDuration } from "./lib/format";
 import { playSaveSound } from "./lib/sound";
 import type {
   AppSettings,
+  CaptureProfile,
   ClipMetadata,
   ClipSavedPayload,
   EngineStats,
+  ForegroundGame,
   MonitorInfo,
+  ProfileMapEntry,
   UpdateProgress,
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 
 const IDLE_STATS: EngineStats = {
   state: "idle",
@@ -89,6 +92,8 @@ export default function App() {
   const [compact, setCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [foreground, setForeground] = useState<ForegroundGame | null>(null);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [onboarding, setOnboarding] = useState<boolean>(() => {
     try {
       return localStorage.getItem("clipflow.onboarding.seen") !== "1";
@@ -101,6 +106,8 @@ export default function App() {
   const toastId = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const activeProfileIdRef = useRef(activeProfileId);
+  activeProfileIdRef.current = activeProfileId;
 
   const pushToast = useCallback((tone: ToastTone, title: string, body?: string) => {
     const id = ++toastId.current;
@@ -293,12 +300,152 @@ export default function App() {
         const next = await clipflow.updateSettings(patch);
         setSettings(next);
         if (patch.bufferSeconds) await clipflow.setBufferSeconds(patch.bufferSeconds);
+        // A manual capture tweak means the deck is no longer driven by a
+        // profile — drop the active-profile badge until the next apply.
+        if (patch.bufferSeconds || patch.targetFps || patch.bitrateKbps || patch.codec) {
+          setActiveProfileId(null);
+        }
       } catch (e) {
         pushToast("err", "Could not persist settings", String(e));
       }
     },
     [pushToast],
   );
+
+  // ------------------------------------------------- capture profiles
+  const applyProfile = useCallback(
+    async (profileId: string) => {
+      if (busy) return;
+      try {
+        const prev = settingsRef.current;
+        const next = await clipflow.applyProfile(profileId);
+        setSettings(next);
+        setActiveProfileId(profileId);
+        const profile = next.profiles.find((p) => p.id === profileId);
+        const needsRestart =
+          !!profile &&
+          (profile.codec !== prev.codec ||
+            profile.bitrateKbps !== prev.bitrateKbps ||
+            profile.targetFps !== prev.targetFps);
+        pushToast(
+          "ok",
+          profile ? `${profile.name} profile active` : "Profile applied",
+          needsRestart
+            ? `Buffer ${next.bufferSeconds}s live — restart the engine for bitrate/codec/fps changes.`
+            : `Buffer ${next.bufferSeconds}s · ${next.targetFps} fps · ${(
+                next.bitrateKbps / 1000
+              ).toFixed(0)} Mb/s · live now`,
+        );
+      } catch (e) {
+        pushToast("err", "Could not apply profile", String(e));
+      }
+    },
+    [busy, pushToast],
+  );
+
+  const saveProfile = useCallback(
+    async (profile: CaptureProfile): Promise<boolean> => {
+      try {
+        const next = await clipflow.saveProfile(profile);
+        setSettings(next);
+        pushToast("ok", "Profile saved", `${profile.name || profile.id} · ${profile.bufferSeconds}s buffer`);
+        return true;
+      } catch (e) {
+        pushToast("err", "Could not save profile", String(e));
+        return false;
+      }
+    },
+    [pushToast],
+  );
+
+  const deleteProfile = useCallback(
+    async (profileId: string) => {
+      try {
+        const next = await clipflow.deleteProfile(profileId);
+        setSettings(next);
+        setActiveProfileId((cur) => (cur === profileId ? null : cur));
+        pushToast("warn", "Profile deleted", profileId);
+      } catch (e) {
+        pushToast("err", "Could not delete profile", String(e));
+      }
+    },
+    [pushToast],
+  );
+
+  const setProfileMap = useCallback(
+    async (map: ProfileMapEntry[]) => {
+      try {
+        const next = await clipflow.setProfileMap(map);
+        setSettings(next);
+      } catch (e) {
+        pushToast("err", "Could not save game mapping", String(e));
+      }
+    },
+    [pushToast],
+  );
+
+  const refreshForeground = useCallback(async () => {
+    try {
+      const game = await clipflow.getForegroundGame();
+      setForeground(game);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Foreground poll (2 s) + profile auto-switch. Runs in the browser too, so
+  // the whole flow is demoable without the native focus API.
+  const applyProfileRef = useRef(applyProfile);
+  applyProfileRef.current = applyProfile;
+  useEffect(() => {
+    let cancelled = false;
+    let lastExe: string | null = null;
+    let lastApplyAt = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      let game: ForegroundGame | null = null;
+      try {
+        game = await clipflow.getForegroundGame();
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      // Keep the previous reference when the focus is unchanged so the 2 s
+      // poll never forces a deck re-render.
+      setForeground((prev) => {
+        if (!game && !prev) return prev;
+        if (game && prev && game.exe === prev.exe && game.title === prev.title) return prev;
+        return game;
+      });
+      const exe = game?.exe ?? "";
+      if (!settingsRef.current.autoSwitchProfiles || !exe) return;
+      if (exe === lastExe) return; // focus unchanged since last poll
+      lastExe = exe;
+      const now = Date.now();
+      if (now - lastApplyAt < 4000) return; // anti-flap cooldown
+      const { profiles, profileMap } = settingsRef.current;
+      const entry = profileMap.find((m) => m.exeName.toLowerCase() === exe);
+      const target = entry ? profiles.find((p) => p.id === entry.profileId) : null;
+      if (target) {
+        if (target.id === activeProfileIdRef.current) return;
+        lastApplyAt = now;
+        await applyProfileRef.current(target.id);
+      } else if (activeProfileIdRef.current && activeProfileIdRef.current !== "default") {
+        // Unmapped game / desktop → back to the Default profile.
+        const def = profiles.find((p) => p.id === "default");
+        if (def) {
+          lastApplyAt = now;
+          await applyProfileRef.current(def.id);
+        }
+      }
+    };
+    void tick();
+    const iv = window.setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(iv);
+    };
+  }, []);
 
   const checkForUpdates = useCallback(async () => {
     if (!native) {
@@ -745,6 +892,27 @@ export default function App() {
                   </span>
                 </div>
               )}
+
+              <div
+                title={foreground ? `${foreground.exe} — ${foreground.title}` : "No game focused"}
+                className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-black/25 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-slate-500"
+              >
+                <span className="shrink-0 text-slate-400">GAME</span>
+                <span className="min-w-0 flex-1 truncate text-right text-cyan-200">
+                  {foreground ? foreground.exe : "—"}
+                </span>
+                <span className="shrink-0 text-slate-400">PROFILE</span>
+                <span
+                  className={cn(
+                    "shrink-0",
+                    activeProfileId ? "text-lime-300" : "text-slate-300",
+                  )}
+                >
+                  {activeProfileId
+                    ? (settings.profiles.find((p) => p.id === activeProfileId)?.name ?? activeProfileId)
+                    : "GLOBAL"}
+                </span>
+              </div>
             </section>
 
             <div className="flex gap-2">
@@ -775,6 +943,13 @@ export default function App() {
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}
                 onChooseFolder={() => void chooseOutputFolder()}
+                foreground={foreground}
+                activeProfileId={activeProfileId}
+                onApplyProfile={(id) => void applyProfile(id)}
+                onSaveProfile={saveProfile}
+                onDeleteProfile={(id) => void deleteProfile(id)}
+                onSetProfileMap={(map) => void setProfileMap(map)}
+                onRefreshForeground={() => void refreshForeground()}
                 updateProgress={updateProgress}
                 onCheckForUpdates={() => void checkForUpdates()}
                 onSimulateDeviceLoss={() => {
