@@ -57,3 +57,6 @@ jobs:
             Automatic updates are delivered through this release.
           releaseDraft: false
           prerelease: false
+          # Also upload the raw release exe so every release ships a portable
+          # build (ClipFlow_v1.1.0_Portable.exe) alongside the installers.
+          uploadPlainBinary: true
