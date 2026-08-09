@@ -73,9 +73,11 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 
 ### 1. Download & Run
 Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.1.0_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.1.0_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.1.0_x64_en-US.msi` (Windows Installer)
+- **Standalone Portable:** `ClipFlow_v1.1.1_Portable.exe` (Single executable, no installation needed)
+- **Setup Installer:** `ClipFlow_1.1.1_x64-setup.exe` (NSIS Installer)
+- **MSI Package:** `ClipFlow_1.1.1_x64_en-US.msi` (Windows Installer)
+
+> 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 
 ### 2. Basic Controls
 - `Alt + C`: **Save Instant Replay** (Flushes your active rolling buffer to disk).

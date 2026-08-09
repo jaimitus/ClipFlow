@@ -20,7 +20,7 @@ import type {
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 
 const IDLE_STATS: EngineStats = {
   state: "idle",
@@ -81,6 +81,8 @@ export default function App() {
   const [activeFlushMs, setActiveFlushMs] = useState<number | undefined>(undefined);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [flushHistory, setFlushHistory] = useState<number[]>([]);
+  const [sessionSaves, setSessionSaves] = useState(0);
+  const [sessionBytes, setSessionBytes] = useState(0);
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [audioOnly, setAudioOnly] = useState(false);
@@ -190,6 +192,8 @@ export default function App() {
         clipflow.onClipSaved((payload: ClipSavedPayload) => {
           setClips((prev) => [payload.clip, ...prev.filter((c) => c.path !== payload.clip.path)]);
           setFlushHistory((h) => [...h.slice(-19), payload.flushMs]);
+          setSessionSaves((n) => n + 1);
+          setSessionBytes((b) => b + payload.clip.size_bytes);
           if (settingsRef.current.playSaveSound) playSaveSound();
           pushToast(
             "ok",
@@ -732,6 +736,15 @@ export default function App() {
                   </button>
                 ))}
               </div>
+
+              {sessionSaves > 0 && (
+                <div className="mt-2 flex items-center justify-between rounded-lg border border-white/5 bg-black/25 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-slate-500">
+                  <span className="text-slate-400">THIS SESSION</span>
+                  <span className="text-lime-300">
+                    {sessionSaves} CLIP{sessionSaves === 1 ? "" : "S"} · {formatBytes(sessionBytes)}
+                  </span>
+                </div>
+              )}
             </section>
 
             <div className="flex gap-2">

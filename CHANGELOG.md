@@ -2,6 +2,17 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-08-09
+
+### Added
+
+- **Session counter** in the Instant Replay panel: clips + bytes saved during the current run.
+- Release pipeline now ships the **portable exe** on every release (`ClipFlow_vX.Y.Z_Portable.exe`).
+
+### Fixed
+
+- CI release creation permission (`contents: write` at job level) so the pipeline can publish releases automatically.
+
 ## [1.1.0] - 2026-08-09
 
 ### Added
