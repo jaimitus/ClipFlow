@@ -31,6 +31,7 @@ Designed for gamers and creators who demand maximum FPS and instant clipping wit
 > - 📊 **STATS tab** — totals, this-week counters and a per-game breakdown with bars.
 > - 🖥️ **REC HUD overlay** — an always-on-top, click-through indicator while the buffer is armed.
 > - ✂️ **Split at playhead** in the trimmer + 💾 **auto-save on game exit** (last 30 s when a game closes).
+> - 🔧 **Two reliability fixes:** audio capture now **retries when a game holds the device in exclusive mode** (no more silent clips) and **Alt+C never steals focus from games** — saving mid-match no longer minimises or pauses them (confirmed with a native toast instead).
 > - Everything from 1.1.3, 1.1.2 & 1.1.0: three-tab nav, per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC and more.
 >
 > Full list in [CHANGELOG.md](CHANGELOG.md).
@@ -44,6 +45,7 @@ Designed for gamers and creators who demand maximum FPS and instant clipping wit
 - **🏷️ Game-Tagged Clips & Folders:** Every save is tagged with the game in the foreground and (optionally) routed into `Videos/ClipFlow/<game>/`. Filter the gallery by game, read per-game stats in the STATS tab, and auto-save the last 30 s whenever a game exits focus.
 - **🖥️ On-Screen REC HUD:** While the buffer is armed, a click-through always-on-top indicator (● REC · elapsed) stays pinned to the corner of your screen — no alt-tabbing to check the deck.
 - **✂️ Split at Playhead:** The trimmer can cut a clip in two at any frame with a single click (two lossless stream-copy trims).
+- **🔇 Game-Focus Friendly:** Saving with `Alt + C` never steals focus from a fullscreen game — the window stays put and you get a native toast instead. Audio capture retries automatically when a game holds the device in exclusive mode, so clips never come out silent.
 - **⌨️ Fully Customisable Hotkeys:** Rebind save and arm/disarm from the UI — click, press, done. Persisted in one JSON file.
 - **🎞️ H.264 or HEVC (H.265):** Pick your codec; HEVC cuts storage in half while staying fully hardware-accelerated.
 - **🖥️ DXGI Desktop Duplication & Direct3D 11:** Zero-copy GPU surface acquisition at 60–144 FPS with sub-millisecond frame latency.

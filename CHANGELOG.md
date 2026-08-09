@@ -13,6 +13,11 @@ All notable changes to **ClipFlow** are documented here. The project follows [Ke
 - **✂️ Split at playhead** — the trimmer can cut a clip in two at the current frame (two stream-copy trims, no re-encode) with the new **SPLIT AT PLAYHEAD** button.
 - **💾 Auto-save on game exit** — when the focused game closes or loses focus (10 s minimum focus, 60 s cooldown), the last 30 s are saved automatically and tagged with the game that just left.
 
+### Fixed
+
+- **Audio capture retries + visible errors** — games holding the audio device in *exclusive mode* made the WASAPI loopback fail with `AUDCLNT_E_DEVICE_IN_USE` and ClipFlow would silently record clips with no audio track. The audio thread now retries every second until the device is free, and the real reason is surfaced on the deck (red *WASAPI loopback* stage in the pipeline + toast on change).
+- **Alt+C no longer steals focus from games** — saving with the hotkey used to raise and focus the ClipFlow window, which minimised or paused fullscreen-exclusive games. Now, when a game has focus, the save happens without touching the window and is confirmed with a native Windows toast (toasts don't steal focus). Auto-saves and tray saves never open the trimmer either.
+
 ## [1.1.3] - 2026-08-09
 
 ### Added
