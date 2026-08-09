@@ -4,8 +4,9 @@ import ClipTrimmerModal from "./components/ClipTrimmerModal";
 import GalleryGrid from "./components/GalleryGrid";
 import SettingsPanel from "./components/SettingsPanel";
 import TitleBar from "./components/TitleBar";
-import { check } from "@tauri-apps/plugin-updater";
+import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { DEFAULT_SETTINGS, clipflow } from "./lib/bridge";
 import { formatBytes, formatDuration } from "./lib/format";
 import { playSaveSound } from "./lib/sound";
@@ -15,6 +16,7 @@ import type {
   ClipSavedPayload,
   EngineStats,
   MonitorInfo,
+  UpdateProgress,
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
@@ -84,6 +86,7 @@ export default function App() {
   const [audioOnly, setAudioOnly] = useState(false);
   const [compact, setCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [onboarding, setOnboarding] = useState<boolean>(() => {
     try {
       return localStorage.getItem("clipflow.onboarding.seen") !== "1";
@@ -300,9 +303,11 @@ export default function App() {
       return;
     }
     setBusy(true);
+    setUpdateProgress({ phase: "PENDING", downloaded: 0, total: 0 });
     try {
       const update = await check();
       if (!update) {
+        setUpdateProgress(null);
         pushToast("ok", "Up to date", `ClipFlow v${APP_VERSION} is the latest release.`);
         return;
       }
@@ -311,15 +316,48 @@ export default function App() {
         `Update v${update.version} available`,
         "Downloading & installing — ClipFlow will restart.",
       );
-      await update.downloadAndInstall();
+      let downloaded = 0;
+      const onProgress = (p: DownloadEvent) => {
+        if (p.event === "Started") {
+          setUpdateProgress({ phase: "DOWNLOADING", downloaded: 0, total: p.data.contentLength ?? 0 });
+        } else if (p.event === "Progress") {
+          downloaded += p.data.chunkLength;
+          setUpdateProgress((prev) =>
+            prev
+              ? { ...prev, downloaded }
+              : { phase: "DOWNLOADING", downloaded, total: 0 },
+          );
+        } else if (p.event === "Finished") {
+          setUpdateProgress({ phase: "INSTALLING", downloaded: 0, total: 0 });
+        }
+      };
+      await update.downloadAndInstall(onProgress);
+      setUpdateProgress(null);
       pushToast("ok", "Update installed", "Restarting ClipFlow…");
       await relaunch();
     } catch (e) {
+      setUpdateProgress(null);
       pushToast("err", "Update check failed", String(e));
     } finally {
       setBusy(false);
     }
   }, [native, pushToast]);
+
+  const chooseOutputFolder = useCallback(async () => {
+    if (!native) {
+      pushToast("info", "Browser preview", "Use the native app to change the output folder.");
+      return;
+    }
+    try {
+      const dir = await open({ directory: true, multiple: false, title: "Choose ClipFlow output folder" });
+      if (typeof dir === "string" && dir.length > 0) {
+        await patchSettings({ outputDir: dir });
+        pushToast("ok", "Output folder changed", dir);
+      }
+    } catch (e) {
+      pushToast("err", "Could not change folder", String(e));
+    }
+  }, [native, patchSettings, pushToast]);
 
   const restartEngine = useCallback(async () => {
     setBusy(true);
@@ -723,6 +761,8 @@ export default function App() {
                 onChange={(p) => void patchSettings(p)}
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}
+                onChooseFolder={() => void chooseOutputFolder()}
+                updateProgress={updateProgress}
                 onCheckForUpdates={() => void checkForUpdates()}
                 onSimulateDeviceLoss={() => {
                   clipflow.simulateDeviceLoss();

@@ -682,6 +682,11 @@ impl CaptureEngine {
         self.shared.ring.lock().set_window(seconds);
     }
 
+    /// Lets the running engine follow a folder change without a full restart.
+    pub fn set_output_dir(&self, dir: PathBuf) {
+        self.config.write().output_dir = dir;
+    }
+
     pub fn simulate_device_loss(&self) {
         self.shared.force_device_reset.store(true, Ordering::Release);
     }

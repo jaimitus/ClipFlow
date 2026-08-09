@@ -510,6 +510,9 @@ pub fn update_settings(
     }
     if let Some(v) = patch.output_dir {
         std::fs::create_dir_all(&v).map_err(|e| e.to_string())?;
+        // Point the running engine at the new folder so the next Alt+C flush
+        // lands where the gallery is scanning — no restart required.
+        state.engine.set_output_dir(std::path::PathBuf::from(&v));
         s.output_dir = v;
     }
     if let Some(v) = patch.open_trimmer_after_save {

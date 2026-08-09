@@ -112,6 +112,13 @@ export interface AppSettings {
   alwaysOnTop: boolean;
 }
 
+/** Live download state surfaced by the auto-updater (About & Updates). */
+export interface UpdateProgress {
+  phase: "PENDING" | "DOWNLOADING" | "INSTALLING";
+  downloaded: number;
+  total: number;
+}
+
 export const VENDOR_LABEL: Record<EncoderVendor, string> = {
   nvenc: "NVIDIA NVENC",
   "amd-amf": "AMD AMF",

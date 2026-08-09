@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { clipflow } from "../lib/bridge";
-import type { AppSettings, EngineStats, MonitorInfo } from "../lib/types";
+import type { AppSettings, EngineStats, MonitorInfo, UpdateProgress } from "../lib/types";
 import { formatBytes } from "../lib/format";
 import { cn } from "../utils/cn";
 
@@ -12,6 +12,8 @@ interface Props {
   onChange: (patch: Partial<AppSettings>) => void;
   onRestartEngine: () => void;
   onOpenFolder: () => void;
+  onChooseFolder: () => void;
+  updateProgress?: UpdateProgress | null;
   onCheckForUpdates: () => void;
   onSimulateDeviceLoss: () => void;
   native: boolean;
@@ -134,6 +136,8 @@ export default function SettingsPanel({
   onChange,
   onRestartEngine,
   onOpenFolder,
+  onChooseFolder,
+  updateProgress,
   onCheckForUpdates,
   onSimulateDeviceLoss,
   native,
@@ -352,12 +356,20 @@ export default function SettingsPanel({
         </Row>
 
         <Row label="Output folder" hint={settings.outputDir}>
-          <button
-            onClick={onOpenFolder}
-            className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
-          >
-            OPEN
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              onClick={onOpenFolder}
+              className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
+            >
+              OPEN
+            </button>
+            <button
+              onClick={onChooseFolder}
+              className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/20"
+            >
+              CHANGE
+            </button>
+          </div>
         </Row>
 
         <Row label="Exit application" hint="Completely stops the GPU buffer and exits process.">
@@ -389,6 +401,31 @@ export default function SettingsPanel({
             CHECK UPDATE
           </button>
         </Row>
+
+        {updateProgress && (
+          <div className="mt-3 space-y-1.5 rounded-lg border border-cyan-300/20 bg-cyan-400/5 px-3 py-2">
+            <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.14em] text-cyan-200">
+              <span>
+                {updateProgress.phase === "DOWNLOADING" ? "DOWNLOADING UPDATE" : updateProgress.phase}
+              </span>
+              {updateProgress.total > 0 && (
+                <span>
+                  {formatBytes(updateProgress.downloaded)} / {formatBytes(updateProgress.total)}
+                </span>
+              )}
+            </div>
+            {updateProgress.total > 0 && (
+              <div className="h-1 overflow-hidden rounded-full bg-black/40">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-400 to-fuchsia-500 transition-all duration-200"
+                  style={{
+                    width: `${Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[10px] text-slate-500">
           <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
