@@ -20,11 +20,29 @@ pub fn parse(accelerator: &str) -> Result<Shortcut, String> {
         .map_err(|e| format!("invalid shortcut '{accelerator}': {e}"))
 }
 
+/// Parses + rejects combos that Windows would treat as dangerous (a bare key
+/// with no modifier can hijack typing in every app).
+pub fn validate(accelerator: &str) -> Result<Shortcut, String> {
+    let sc = parse(accelerator)?;
+    let lower = accelerator.to_ascii_lowercase();
+    let has_modifier = [
+        "alt", "ctrl", "control", "shift", "super", "win", "cmd", "meta", "option", "command",
+    ]
+    .iter()
+    .any(|m| lower.contains(m));
+    if !has_modifier {
+        return Err(format!(
+            "'{accelerator}' needs a modifier (Alt, Ctrl, Shift or Win) — Windows reserves bare keys for typing"
+        ));
+    }
+    Ok(sc)
+}
+
 /// Registers both shortcuts. Called once from `setup`.
 pub fn register_all(app: &AppHandle, save: &str, toggle: &str) -> Result<(), String> {
     let gs = app.global_shortcut();
-    let save_sc = parse(save)?;
-    let toggle_sc = parse(toggle)?;
+    let save_sc = validate(save)?;
+    let toggle_sc = validate(toggle)?;
 
     if !gs.is_registered(save_sc) {
         gs.register(save_sc)
@@ -37,16 +55,24 @@ pub fn register_all(app: &AppHandle, save: &str, toggle: &str) -> Result<(), Str
     Ok(())
 }
 
-pub fn rebind_save_hotkey(app: &AppHandle, previous: &str, next: &str) -> Result<(), String> {
+/// Registers the new combo (if different) and then drops the old one. Order
+/// matters: registering first means a failed rebind (e.g. another app owns the
+/// combo) leaves the previous hotkey intact instead of disabling it.
+pub fn rebind(app: &AppHandle, previous: &str, next: &str) -> Result<(), String> {
     let gs = app.global_shortcut();
-    if let Ok(prev) = parse(previous) {
+    let sc = validate(next)?;
+    let prev_sc = parse(previous).ok();
+    if prev_sc.as_ref() == Some(&sc) {
+        return Ok(()); // nothing to do — same combo
+    }
+    gs.register(sc)
+        .map_err(|e| format!("could not register {next}: {e}"))?;
+    if let Some(prev) = prev_sc {
         if gs.is_registered(prev) {
             let _ = gs.unregister(prev);
         }
     }
-    let sc = parse(next)?;
-    gs.register(sc)
-        .map_err(|e| format!("could not register {next}: {e}"))
+    Ok(())
 }
 
 /// The single handler wired into the plugin builder.

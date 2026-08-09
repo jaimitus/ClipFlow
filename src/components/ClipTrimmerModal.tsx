@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { assetUrl } from "../lib/bridge";
+import { assetUrl, clipflow } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { clamp, formatBytes, formatTimecode } from "../lib/format";
 import { cn } from "../utils/cn";
@@ -18,6 +18,10 @@ interface Props {
   onSaveTrimmed: (start: number, end: number) => Promise<void> | void;
   onCopy: () => Promise<void> | void;
   onReveal: () => Promise<void> | void;
+  onOpenExternal: () => Promise<void> | void;
+  onRename: (newName: string) => Promise<void> | void;
+  /** Current frame → PNG data URL (hardware decode on native). */
+  onSnapshot: (pngBase64: string) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onClose: () => void;
 }
@@ -31,6 +35,9 @@ export default function ClipTrimmerModal({
   onSaveTrimmed,
   onCopy,
   onReveal,
+  onOpenExternal,
+  onRename,
+  onSnapshot,
   onDiscard,
   onClose,
 }: Props) {
@@ -45,6 +52,8 @@ export default function ClipTrimmerModal({
   const [dragging, setDragging] = useState<Thumb>(null);
   const [muted, setMuted] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState(clip.file_name);
 
   const src = clip.preview_url ?? assetUrl(clip.path);
   const hasVideo = src.length > 0;
@@ -55,7 +64,25 @@ export default function ClipTrimmerModal({
     setEnd(Math.max(clip.duration_seconds, 0.1));
     setPlayhead(0);
     setDuration(Math.max(clip.duration_seconds, 0.1));
-  }, [clip.id, clip.duration_seconds]);
+    setNameDraft(clip.file_name);
+    setRenaming(false);
+  }, [clip.id, clip.duration_seconds, clip.file_name]);
+
+  const commitRename = useCallback(() => {
+    const next = nameDraft.trim();
+    if (!next || next === clip.file_name) {
+      setNameDraft(clip.file_name);
+      setRenaming(false);
+      return;
+    }
+    void run("Renaming…", async () => {
+      try {
+        await onRename(next);
+      } finally {
+        setRenaming(false);
+      }
+    });
+  }, [nameDraft, clip.file_name, onRename]);
 
   const handleLoadedMetadata = useCallback(() => {
     const v = videoRef.current;
@@ -149,6 +176,17 @@ export default function ClipTrimmerModal({
   // ------------------------------------------------------------- shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Never hijack keys while the rename input (or any other field) is focused.
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -189,6 +227,17 @@ export default function ClipTrimmerModal({
     }
   };
 
+  /** Grabs the current frame (hardware decode on native; canvas in browser). */
+  const takeSnapshot = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    void run("Capturing frame…", () =>
+      clipflow
+        .extractFramePng(clip.path, playhead, 0)
+        .then((png) => onSnapshot(png)),
+    );
+  };
+
   // Ticks every ~1/10 of the timeline.
   const ticks = useMemo(() => {
     const count = 10;
@@ -211,9 +260,40 @@ export default function ClipTrimmerModal({
               <div className="font-mono text-[11px] font-semibold tracking-[0.24em] text-fuchsia-200">
                 QUICK TRIM
               </div>
-              <div className="mt-0.5 max-w-[46ch] truncate font-mono text-[11px] text-slate-500">
-                {clip.file_name}
-              </div>
+              {renaming ? (
+                <input
+                  name="clip-rename"
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitRename();
+                    } else if (e.key === "Escape") {
+                      setNameDraft(clip.file_name);
+                      setRenaming(false);
+                    }
+                  }}
+                  onBlur={commitRename}
+                  className="mt-0.5 w-full max-w-[42ch] rounded border border-cyan-300/50 bg-black/50 px-1.5 py-0.5 font-mono text-[11px] text-cyan-100 outline-none"
+                  spellCheck={false}
+                />
+              ) : (
+                <button
+                  onClick={() => {
+                    setNameDraft(clip.file_name);
+                    setRenaming(true);
+                  }}
+                  title="Rename clip"
+                  className="group mt-0.5 max-w-[46ch] truncate font-mono text-[11px] text-slate-500 transition hover:text-cyan-200"
+                >
+                  {clip.file_name}
+                  <span className="ml-2 text-[9px] tracking-[0.14em] text-slate-700 transition group-hover:text-cyan-300">
+                    RENAME ↵
+                  </span>
+                </button>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -447,6 +527,20 @@ export default function ClipTrimmerModal({
               className="no-drag rounded-lg border border-white/10 px-3.5 py-2 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/50 hover:text-cyan-200 disabled:opacity-50"
             >
               OPEN FOLDER
+            </button>
+            <button
+              onClick={() => run("Opening in player…", onOpenExternal)}
+              disabled={busy}
+              className="no-drag rounded-lg border border-white/10 px-3.5 py-2 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-white/30 hover:text-slate-100 disabled:opacity-50"
+            >
+              ▶ PLAY
+            </button>
+            <button
+              onClick={takeSnapshot}
+              disabled={busy}
+              className="no-drag rounded-lg border border-white/10 px-3.5 py-2 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-amber-300/50 hover:text-amber-200 disabled:opacity-50"
+            >
+              ◉ SNAPSHOT PNG
             </button>
             <button
               onClick={() => run("Copying to clipboard…", onCopy)}

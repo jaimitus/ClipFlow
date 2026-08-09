@@ -129,6 +129,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   minimizeToTray: true,
   autostartBuffer: true,
   playSaveSound: true,
+  alwaysOnTop: false,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -220,6 +221,82 @@ export const clipflow = {
       return;
     }
     simEngine.delete(path);
+  },
+
+  /** Removes every clip; resolves to the number deleted. */
+  async deleteAllClips(): Promise<number> {
+    if (isTauri()) return invoke<number>("delete_all_clips");
+    return simEngine.clearAll();
+  },
+
+  /** Renames a clip file on disk; resolves to the new path. */
+  async renameClip(path: string, newName: string): Promise<string> {
+    if (isTauri()) return invoke<string>("rename_clip", { path, newName });
+    return simEngine.rename(path, newName);
+  },
+
+  /**
+   * Grabs a frame of a clip as a PNG data URL. Native: hardware decode in
+   * Rust (maxWidth 0 = native resolution). Browser: canvas from the preview.
+   */
+  async extractFramePng(
+    path: string,
+    atSeconds: number,
+    maxWidth = 0,
+  ): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>("extract_png_frame", {
+        path,
+        atSeconds,
+        maxWidth,
+      });
+    }
+    const clip = simEngine.find(path);
+    const src = clip?.preview_url;
+    if (!src) throw new Error("no preview stream available for this clip");
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.src = src;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error("could not load clip preview"));
+      video.load();
+    });
+    video.currentTime = Math.min(Math.max(atSeconds, 0), video.duration || 0);
+    await new Promise<void>((resolve) => {
+      video.onseeked = () => resolve();
+      window.setTimeout(resolve, 800);
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.drawImage(video, 0, 0);
+    return canvas.toDataURL("image/png");
+  },
+
+  /** Persists a PNG data URL into the output folder (native) or downloads it. */
+  async snapshotToOutput(pngBase64: string, baseName: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>("save_png_snapshot", { pngBase64, baseName });
+    }
+    const a = document.createElement("a");
+    a.href = pngBase64;
+    a.download = `${baseName.replace(/\.png$/i, "") || "snapshot"}.png`;
+    a.click();
+    return `downloaded ${a.download}`;
+  },
+
+  /** Manual check for updates — opens the GitHub Releases page, nothing else. */
+  async openReleasesPage(): Promise<void> {
+    if (isTauri()) {
+      await invoke("open_releases_page");
+      return;
+    }
+    window.open("https://github.com/jaimitus/ClipFlow/releases", "_blank");
   },
 
   async copyClip(path: string): Promise<void> {

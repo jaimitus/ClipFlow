@@ -7,9 +7,11 @@ import { cn } from "../utils/cn";
 interface Props {
   clips: ClipMetadata[];
   loading?: boolean;
+  compact?: boolean;
   onOpen: (clip: ClipMetadata) => void;
   onCopy: (clip: ClipMetadata) => void;
   onReveal: (clip: ClipMetadata) => void;
+  onOpenExternal: (clip: ClipMetadata) => void;
   onDelete: (clip: ClipMetadata) => void;
 }
 
@@ -47,15 +49,19 @@ function IconButton({
 /** Plays the clip inline on hover, exactly like the native gallery does. */
 function ClipCard({
   clip,
+  compact,
   onOpen,
   onCopy,
   onReveal,
+  onOpenExternal,
   onDelete,
 }: {
   clip: ClipMetadata;
+  compact?: boolean;
   onOpen: (c: ClipMetadata) => void;
   onCopy: (c: ClipMetadata) => void;
   onReveal: (c: ClipMetadata) => void;
+  onOpenExternal: (c: ClipMetadata) => void;
   onDelete: (c: ClipMetadata) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -123,6 +129,15 @@ function ClipCard({
 
         <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
           <IconButton
+            label="▶"
+            title="Open in external player"
+            tone="slate"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenExternal(clip);
+            }}
+          />
+          <IconButton
             label="⧉"
             title="Copy video to clipboard"
             tone="magenta"
@@ -152,7 +167,7 @@ function ClipCard({
         </div>
       </div>
 
-      <div className="px-3 py-2.5">
+      <div className={compact ? "px-2.5 py-2" : "px-3 py-2.5"}>
         <div className="truncate text-[13px] font-medium text-slate-100">{clip.title}</div>
         <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-500">
           <span>{formatRelativeTime(clip.created_unix_ms)}</span>
@@ -166,15 +181,21 @@ function ClipCard({
 export default function GalleryGrid({
   clips,
   loading,
+  compact,
   onOpen,
   onCopy,
   onReveal,
+  onOpenExternal,
   onDelete,
 }: Props) {
+  const gridClass = compact
+    ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+    : "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
+
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className={gridClass}>
+        {Array.from({ length: compact ? 8 : 6 }).map((_, i) => (
           <div key={i} className="panel h-[190px] animate-pulse rounded-xl opacity-50" />
         ))}
       </div>
@@ -200,14 +221,16 @@ export default function GalleryGrid({
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className={gridClass}>
       {clips.map((clip) => (
         <ClipCard
           key={clip.id}
           clip={clip}
+          compact={compact}
           onOpen={onOpen}
           onCopy={onCopy}
           onReveal={onReveal}
+          onOpenExternal={onOpenExternal}
           onDelete={onDelete}
         />
       ))}

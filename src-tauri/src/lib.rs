@@ -31,6 +31,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // GitHub Releases auto-updater — check() / downloadAndInstall() are
+        // driven from the UI; nothing runs in the background.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -66,6 +70,18 @@ pub fn run() {
                     tokio::time::sleep(Duration::from_millis(900)).await;
                     let _ = h.emit(commands::EVT_ERROR, msg);
                 });
+            }
+
+            // Pinned window: honour the saved always-on-top preference.
+            if let Some(w) = handle.get_webview_window("main") {
+                let on_top = handle
+                    .state::<AppState>()
+                    .settings
+                    .read()
+                    .always_on_top;
+                if on_top {
+                    let _ = w.set_always_on_top(true);
+                }
             }
 
             // Arm the buffer immediately so the very first Alt+C already has
@@ -137,7 +153,10 @@ pub fn run() {
             commands::get_clip_thumbnail,
             commands::trim_clip,
             commands::delete_clip,
+            commands::delete_all_clips,
             commands::rename_clip,
+            commands::extract_png_frame,
+            commands::save_png_snapshot,
             commands::copy_clip_to_clipboard,
             commands::reveal_clip_in_folder,
             commands::open_output_folder,
@@ -148,6 +167,8 @@ pub fn run() {
             commands::get_monitors,
             commands::get_output_dir,
             commands::set_save_hotkey,
+            commands::set_toggle_hotkey,
+            commands::open_releases_page,
             commands::show_main_window,
             commands::hide_main_window,
             commands::get_system_report,

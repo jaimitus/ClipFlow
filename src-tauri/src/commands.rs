@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::media::library::{self, ClipMetadata, TrimResult};
 use crate::media::recorder::{
-    enumerate_monitors, CaptureEngine, ClipWriteResult, EngineStats, MonitorInfo,
+    enumerate_monitors, CaptureEngine, ClipWriteResult, Codec, EngineStats, MonitorInfo,
 };
 use crate::settings::Settings;
 
@@ -260,6 +260,21 @@ pub fn delete_clip(path: String) -> Result<(), String> {
     library::delete_clip(Path::new(&path)).map_err(|e| e.to_string())
 }
 
+/// Removes every recorded clip from the output folder. Returns how many were
+/// deleted so the UI can toast a precise count.
+#[tauri::command]
+pub fn delete_all_clips(state: State<'_, AppState>) -> Result<u32, String> {
+    let dir = state.output_dir();
+    let clips = library::scan_directory(&dir, false).map_err(|e| e.to_string())?;
+    let mut deleted = 0u32;
+    for c in &clips {
+        if library::delete_clip(Path::new(&c.path)).is_ok() {
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 #[tauri::command]
 pub fn rename_clip(path: String, new_name: String) -> Result<String, String> {
     let src = PathBuf::from(&path);
@@ -313,6 +328,72 @@ pub fn open_clip_external(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Manual "check for updates" — just opens the GitHub Releases page. No
+/// background updater, no telemetry: ClipFlow stays true to its privacy model.
+#[tauri::command]
+pub fn open_releases_page(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(
+            "https://github.com/jaimitus/ClipFlow/releases",
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())
+}
+
+/// Decodes one frame of a clip (hardware accelerated) into a full-resolution
+/// PNG data URL — powers the "snapshot" button in the trimmer without ever
+/// touching the webview's canvas (which asset-protocol media would taint).
+#[tauri::command]
+pub async fn extract_png_frame(
+    path: String,
+    at_seconds: Option<f32>,
+    max_width: Option<u32>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        library::extract_frame_png(
+            Path::new(&path),
+            at_seconds.unwrap_or(0.0),
+            max_width.unwrap_or(0),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("snapshot task panicked: {e}"))?
+}
+
+/// Writes a PNG (base64 data URL) into the ClipFlow output folder. Only accepts
+/// valid PNG bytes so the webview can never write arbitrary files.
+#[tauri::command]
+pub fn save_png_snapshot(
+    state: State<'_, AppState>,
+    png_base64: String,
+    base_name: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let raw = png_base64.trim_start_matches("data:image/png;base64,");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| format!("invalid png data: {e}"))?;
+    if bytes.len() < 8 || bytes[..8] != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return Err("payload is not a PNG image".into());
+    }
+    let sanitized: String = base_name
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let stem = if sanitized.is_empty() {
+        "snapshot".to_string()
+    } else {
+        sanitized.trim_end_matches(".png").to_string()
+    };
+    let dir = state.output_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{stem}.png"));
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Reads a clip into memory and returns it as a base64 data URL so the webview
 /// can preview it without granting broad filesystem scope.
 #[tauri::command]
@@ -354,6 +435,7 @@ pub struct SettingsPatch {
     pub buffer_seconds: Option<u32>,
     pub target_fps: Option<u32>,
     pub bitrate_kbps: Option<u32>,
+    pub codec: Option<Codec>,
     pub monitor_index: Option<u32>,
     pub capture_system_audio: Option<bool>,
     pub capture_microphone: Option<bool>,
@@ -362,14 +444,48 @@ pub struct SettingsPatch {
     pub minimize_to_tray: Option<bool>,
     pub autostart_buffer: Option<bool>,
     pub play_save_sound: Option<bool>,
+    pub hotkey_save: Option<String>,
+    pub hotkey_toggle: Option<String>,
+    pub always_on_top: Option<bool>,
 }
 
 #[tauri::command]
 pub fn update_settings(
     state: State<'_, AppState>,
+    app: AppHandle,
     patch: SettingsPatch,
 ) -> Result<Settings, String> {
     let mut s = state.settings.write();
+
+    // Hotkeys must be re-registered with the OS before we persist them — if
+    // another app owns the combo the whole patch fails and nothing is written.
+    // Conflicts are rejected up front so one combo can never drive both actions.
+    if let (Some(a), Some(b)) = (patch.hotkey_save.as_ref(), patch.hotkey_toggle.as_ref()) {
+        if a == b {
+            return Err(format!(
+                "save and arm/disarm hotkeys cannot share the same combo '{a}'"
+            ));
+        }
+    }
+    if let Some(v) = patch.hotkey_save.as_ref() {
+        if v == &s.hotkey_toggle {
+            return Err(format!("'{v}' is already used by the arm/disarm hotkey"));
+        }
+    }
+    if let Some(v) = patch.hotkey_toggle.as_ref() {
+        if v == &s.hotkey_save {
+            return Err(format!("'{v}' is already used by the save hotkey"));
+        }
+    }
+    if let Some(v) = patch.hotkey_save {
+        crate::hotkeys::rebind(&app, &s.hotkey_save, &v)?;
+        s.hotkey_save = v;
+    }
+    if let Some(v) = patch.hotkey_toggle {
+        crate::hotkeys::rebind(&app, &s.hotkey_toggle, &v)?;
+        s.hotkey_toggle = v;
+    }
+
     if let Some(v) = patch.buffer_seconds {
         s.buffer_seconds = v.clamp(5, 600);
         state.engine.set_buffer_seconds(s.buffer_seconds);
@@ -379,6 +495,9 @@ pub fn update_settings(
     }
     if let Some(v) = patch.bitrate_kbps {
         s.bitrate_kbps = v.clamp(1_000, 150_000);
+    }
+    if let Some(v) = patch.codec {
+        s.codec = v;
     }
     if let Some(v) = patch.monitor_index {
         s.monitor_index = v;
@@ -405,6 +524,12 @@ pub fn update_settings(
     if let Some(v) = patch.play_save_sound {
         s.play_save_sound = v;
     }
+    if let Some(v) = patch.always_on_top {
+        s.always_on_top = v;
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.set_always_on_top(v);
+        }
+    }
     s.save()?;
     Ok(s.clone())
 }
@@ -419,7 +544,8 @@ pub fn get_output_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.settings.read().output_dir.clone())
 }
 
-/// Re-registers the save hotkey at runtime (settings panel).
+/// Re-registers the save hotkey at runtime (kept for API symmetry; the UI goes
+/// through `update_settings` so save + toggle rebind through the same path).
 #[tauri::command]
 pub fn set_save_hotkey(
     app: AppHandle,
@@ -427,9 +553,24 @@ pub fn set_save_hotkey(
     accelerator: String,
 ) -> Result<String, String> {
     let previous = state.settings.read().hotkey_save.clone();
-    crate::hotkeys::rebind_save_hotkey(&app, &previous, &accelerator)?;
+    crate::hotkeys::rebind(&app, &previous, &accelerator)?;
     let mut s = state.settings.write();
     s.hotkey_save = accelerator.clone();
+    s.save()?;
+    Ok(accelerator)
+}
+
+/// Re-registers the arm/disarm hotkey at runtime.
+#[tauri::command]
+pub fn set_toggle_hotkey(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    accelerator: String,
+) -> Result<String, String> {
+    let previous = state.settings.read().hotkey_toggle.clone();
+    crate::hotkeys::rebind(&app, &previous, &accelerator)?;
+    let mut s = state.settings.write();
+    s.hotkey_toggle = accelerator.clone();
     s.save()?;
     Ok(accelerator)
 }

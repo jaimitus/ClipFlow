@@ -23,10 +23,13 @@
     "global-shortcut:allow-is-registered",
     "opener:default",
     "opener:allow-open-path",
+    "opener:allow-open-url",
     "opener:allow-reveal-item-in-dir",
     "dialog:allow-save",
     "dialog:allow-open",
     "notification:default",
+    "updater:default",
+    "process:default",
     {
       "identifier": "fs:allow-read-file",
       "allow": [{ "path": "$VIDEO/ClipFlow/**" }]

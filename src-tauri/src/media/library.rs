@@ -250,7 +250,11 @@ mod imp {
         }
     }
 
-    pub(super) fn extract_thumbnail(path: &Path, at_seconds: f32) -> RResult<String> {
+    pub(super) fn extract_frame_png(
+        path: &Path,
+        at_seconds: f32,
+        max_width: u32,
+    ) -> RResult<String> {
         let _mf = Mf::enter()?;
         unsafe {
             let reader = open_reader(path, false)?;
@@ -321,8 +325,9 @@ mod imp {
             buffer.Lock(&mut ptr, None, Some(&mut len)).map_err(err)?;
             let src = std::slice::from_raw_parts(ptr, len as usize);
 
-            // Box-filter downscale to <= 400 px wide and swap BGRA ➜ RGB.
-            let target_w = 400u32.min(w);
+            // Box-filter downscale (<= max_width px wide; 0 = native size) and
+            // swap BGRA ➜ RGB.
+            let target_w = if max_width == 0 { w } else { max_width.min(w) };
             let target_h = ((target_w as f32) * h as f32 / w as f32).round().max(1.0) as u32;
             let mut rgb_buf = vec![0u8; (target_w * target_h * 3) as usize];
             let stride = (w * 4) as usize;
@@ -523,8 +528,12 @@ mod imp {
         })
     }
 
-    pub(super) fn extract_thumbnail(_path: &Path, _at: f32) -> RResult<String> {
-        Err(RecorderError::Other("thumbnails require Windows".into()))
+    pub(super) fn extract_frame_png(
+        _path: &Path,
+        _at: f32,
+        _max_width: u32,
+    ) -> RResult<String> {
+        Err(RecorderError::Other("frame extraction requires Windows".into()))
     }
 
     pub(super) fn trim(source: &Path, dest: &Path, start: f32, end: f32) -> RResult<(f32, f32)> {
@@ -546,8 +555,15 @@ pub fn probe(path: &Path) -> RResult<ProbeResult> {
     imp::probe(path)
 }
 
+/// Small (~<=400 px) PNG for the gallery cards.
 pub fn extract_thumbnail(path: &Path, at_seconds: f32) -> RResult<String> {
-    imp::extract_thumbnail(path, at_seconds)
+    extract_frame_png(path, at_seconds, 400)
+}
+
+/// PNG at any requested width (`0` = native resolution). Used by the trimmer's
+/// snapshot button.
+pub fn extract_frame_png(path: &Path, at_seconds: f32, max_width: u32) -> RResult<String> {
+    imp::extract_frame_png(path, at_seconds, max_width)
 }
 
 pub fn trim_stream_copy(

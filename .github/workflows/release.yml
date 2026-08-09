@@ -1,0 +1,59 @@
+name: Release
+
+# Push a tag like `v1.1.0` (or run manually) to build, sign and publish a
+# GitHub Release. tauri-action uploads the installers, their `.sig` files and
+# the `latest.json` updater manifest — which is exactly the endpoint ClipFlow's
+# in-app updater polls (`releases/latest/download/latest.json`).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "ClipFlow v__VERSION__"
+          releaseBody: |
+            See the assets below to download and install this version.
+            Windows: use the **NSIS setup** (recommended) or the **MSI** package.
+            Automatic updates are delivered through this release.
+          releaseDraft: false
+          prerelease: false

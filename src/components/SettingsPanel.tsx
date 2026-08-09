@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { clipflow } from "../lib/bridge";
 import type { AppSettings, EngineStats, MonitorInfo } from "../lib/types";
 import { formatBytes } from "../lib/format";
 import { cn } from "../utils/cn";
@@ -7,9 +8,11 @@ interface Props {
   settings: AppSettings;
   stats: EngineStats;
   monitors: MonitorInfo[];
+  version: string;
   onChange: (patch: Partial<AppSettings>) => void;
   onRestartEngine: () => void;
   onOpenFolder: () => void;
+  onCheckForUpdates: () => void;
   onSimulateDeviceLoss: () => void;
   native: boolean;
 }
@@ -58,19 +61,107 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
 const BUFFER_PRESETS = [15, 30, 60, 120, 300];
 const FPS_PRESETS = [30, 60, 120, 144];
 
+/**
+ * Turns a raw keydown into a global-shortcut accelerator string, or null when
+ * the combo is not a valid global hotkey (no modifier, or a modifier key alone).
+ */
+function acceleratorFromEvent(e: KeyboardEvent): string | null {
+  if (e.key === "Escape") return "__cancel__";
+  const mods: string[] = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Win");
+
+  const key = e.key;
+  if (["Control", "Alt", "Shift", "Meta", "CapsLock", "Tab"].includes(key)) return null;
+
+  let token: string | null = null;
+  if (/^[a-z0-9]$/i.test(key)) token = key.toUpperCase();
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(key)) token = key.toUpperCase();
+  else if (key === " ") token = "Space";
+  else return null; // arrows/media keys are allowed only as bare keys → rejected below
+
+  if (mods.length === 0) return null; // Windows reserves bare keys for typing
+  return [...mods, token].join("+");
+}
+
+/** Click-to-record hotkey badge. */
+function HotkeyRecorder({
+  value,
+  recording,
+  onStart,
+}: {
+  value: string;
+  recording: boolean;
+  onStart: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!recording) return;
+    ref.current?.focus();
+  }, [recording]);
+  return (
+    <button
+      ref={ref}
+      onClick={onStart}
+      disabled={recording}
+      title="Click, then press the new key combination"
+      className={cn(
+        "relative rounded-md border px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] transition",
+        recording
+          ? "animate-pulse border-lime-300/70 bg-lime-400/15 text-lime-100"
+          : "border-fuchsia-300/40 bg-fuchsia-500/10 text-fuchsia-100 hover:border-fuchsia-300/80 hover:bg-fuchsia-500/20",
+      )}
+    >
+      {recording ? (
+        <>
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-rec rounded-full bg-lime-300 align-middle" />
+          PRESS KEYS…
+        </>
+      ) : (
+        <>{value.toUpperCase()}</>
+      )}
+    </button>
+  );
+}
+
 export default function SettingsPanel({
   settings,
   stats,
   monitors,
+  version,
   onChange,
   onRestartEngine,
   onOpenFolder,
+  onCheckForUpdates,
   onSimulateDeviceLoss,
   native,
 }: Props) {
   const [bitrate, setBitrate] = useState(settings.bitrateKbps);
+  const [recording, setRecording] = useState<"save" | "toggle" | null>(null);
 
   useEffect(() => setBitrate(settings.bitrateKbps), [settings.bitrateKbps]);
+
+  // Global key capture while a hotkey badge is in "record" mode.
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const accel = acceleratorFromEvent(e);
+      if (accel === "__cancel__") {
+        setRecording(null);
+        return;
+      }
+      if (!accel) return;
+      const patch = recording === "save" ? { hotkeySave: accel } : { hotkeyToggle: accel };
+      onChange(patch);
+      setRecording(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording, onChange]);
 
   const projectedRam =
     (settings.bufferSeconds * settings.bitrateKbps * 1000) / 8 * 1.6;
@@ -115,6 +206,28 @@ export default function SettingsPanel({
                 )}
               >
                 {f}
+              </button>
+            ))}
+          </div>
+        </Row>
+
+        <Row
+          label="Video codec"
+          hint="HEVC (H.265) roughly halves file size. Applies after APPLY & RESTART ENGINE."
+        >
+          <div className="flex gap-1.5">
+            {(["h264", "hevc"] as const).map((c) => (
+              <button
+                key={c}
+                onClick={() => onChange({ codec: c })}
+                className={cn(
+                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
+                  settings.codec === c
+                    ? "border-cyan-300/60 bg-cyan-400/20 text-cyan-100"
+                    : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                )}
+              >
+                {c === "h264" ? "H.264" : "HEVC"}
               </button>
             ))}
           </div>
@@ -187,16 +300,20 @@ export default function SettingsPanel({
           WORKFLOW
         </h3>
 
-        <Row label="Save hotkey" hint="Registered globally — works inside full-screen games.">
-          <span className="rounded-md border border-fuchsia-300/40 bg-fuchsia-500/10 px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] text-fuchsia-100">
-            {settings.hotkeySave}
-          </span>
+        <Row label="Save hotkey" hint="Click the badge and press the new combo. Must include a modifier; works inside full-screen games.">
+          <HotkeyRecorder
+            value={settings.hotkeySave}
+            recording={recording === "save"}
+            onStart={() => setRecording("save")}
+          />
         </Row>
 
-        <Row label="Arm / disarm hotkey">
-          <span className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] text-slate-300">
-            {settings.hotkeyToggle}
-          </span>
+        <Row label="Arm / disarm hotkey" hint="Click the badge and press the new combo.">
+          <HotkeyRecorder
+            value={settings.hotkeyToggle}
+            recording={recording === "toggle"}
+            onStart={() => setRecording("toggle")}
+          />
         </Row>
 
         <Row label="Open trimmer after save" hint="Floating quick-trim modal pops up instantly.">
@@ -220,6 +337,20 @@ export default function SettingsPanel({
           />
         </Row>
 
+        <Row label="Play sound on save" hint="A short shutter blip confirms Alt+C — no audio files, generated locally.">
+          <Toggle
+            on={settings.playSaveSound}
+            onClick={() => onChange({ playSaveSound: !settings.playSaveSound })}
+          />
+        </Row>
+
+        <Row label="Pin window on top" hint="Keeps the deck visible over full-screen games.">
+          <Toggle
+            on={settings.alwaysOnTop}
+            onClick={() => onChange({ alwaysOnTop: !settings.alwaysOnTop })}
+          />
+        </Row>
+
         <Row label="Output folder" hint={settings.outputDir}>
           <button
             onClick={onOpenFolder}
@@ -237,6 +368,40 @@ export default function SettingsPanel({
             QUIT CLIPFLOW
           </button>
         </Row>
+      </section>
+
+      <section className="panel rounded-2xl p-4">
+        <h3 className="font-mono text-[11px] tracking-[0.24em] text-fuchsia-300">
+          ABOUT & UPDATES
+        </h3>
+
+        <Row label="Version" hint="Built on Rust + Tauri v2 — single portable binary.">
+          <span className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] text-slate-300">
+            v{version}
+          </span>
+        </Row>
+
+        <Row label="Check for updates" hint="Fetches the newest GitHub release and installs it automatically — signed updates, still no background updater.">
+          <button
+            onClick={onCheckForUpdates}
+            className="rounded-lg border border-cyan-300/40 bg-cyan-400/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-400/20"
+          >
+            CHECK UPDATE
+          </button>
+        </Row>
+
+        <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[10px] text-slate-500">
+          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
+            <div className="tracking-[0.16em] text-slate-600">RUNTIME</div>
+            <div className="mt-1 text-slate-300">
+              {native ? "Tauri v2 · Rust · WebView2" : "Browser preview"}
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
+            <div className="tracking-[0.16em] text-slate-600">PROCESS RSS</div>
+            <div className="mt-1 text-slate-300">{formatBytes(stats.process_rss_bytes)}</div>
+          </div>
+        </div>
       </section>
 
       <section className="panel rounded-2xl p-4">

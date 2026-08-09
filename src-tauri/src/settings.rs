@@ -25,6 +25,9 @@ pub struct Settings {
     pub minimize_to_tray: bool,
     pub autostart_buffer: bool,
     pub play_save_sound: bool,
+    /// Keep the control deck pinned above full-screen games.
+    #[serde(default)]
+    pub always_on_top: bool,
 }
 
 impl Default for Settings {
@@ -44,6 +47,7 @@ impl Default for Settings {
             minimize_to_tray: true,
             autostart_buffer: true,
             play_save_sound: true,
+            always_on_top: false,
         }
     }
 }

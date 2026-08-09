@@ -108,6 +108,8 @@ export interface AppSettings {
   minimizeToTray: boolean;
   autostartBuffer: boolean;
   playSaveSound: boolean;
+  /** Pin the control deck above full-screen games. */
+  alwaysOnTop: boolean;
 }
 
 export const VENDOR_LABEL: Record<EncoderVendor, string> = {

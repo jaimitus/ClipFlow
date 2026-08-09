@@ -382,10 +382,38 @@ export class SimEngine {
     return this.clips;
   }
 
+  find(path: string): ClipMetadata | undefined {
+    return this.clips.find((c) => c.path === path);
+  }
+
   delete(path: string) {
     const target = this.clips.find((c) => c.path === path);
     if (target?.preview_url) URL.revokeObjectURL(target.preview_url);
     this.clips = this.clips.filter((c) => c.path !== path);
+  }
+
+  /** Removes every simulated clip; returns how many were removed. */
+  clearAll(): number {
+    const count = this.clips.length;
+    for (const c of this.clips) {
+      if (c.preview_url) URL.revokeObjectURL(c.preview_url);
+    }
+    this.clips = [];
+    return count;
+  }
+
+  /** Renames a simulated clip in memory; returns the new path. */
+  rename(path: string, newName: string): string {
+    const target = this.clips.find((c) => c.path === path);
+    if (!target) throw new Error("clip not found");
+    const clean = newName.replace(/[\\/:*?"<>|]/g, "");
+    const name = clean.toLowerCase().endsWith(".mp4") ? clean : `${clean}.mp4`;
+    target.file_name = name;
+    // Function replacer: a literal `$` in the name must not be interpreted as
+    // a `String.replace` expansion token.
+    target.path = target.path.replace(/[^\\/]+\.mp4$/, () => name);
+    target.title = name.replace(/\.mp4$/i, "").replace(/_/g, " ");
+    return target.path;
   }
 
   /** Simulated stream copy: derive a new clip that points at the same media. */

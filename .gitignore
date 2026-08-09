@@ -7,6 +7,9 @@ dist/
 # Release artifacts
 release_v1.0.0/
 
+# Updater signing keys (private key must NEVER be committed)
+.tauri/
+
 # Rust / Tauri
 target/
 src-tauri/target/

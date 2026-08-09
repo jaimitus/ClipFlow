@@ -4,8 +4,11 @@ import ClipTrimmerModal from "./components/ClipTrimmerModal";
 import GalleryGrid from "./components/GalleryGrid";
 import SettingsPanel from "./components/SettingsPanel";
 import TitleBar from "./components/TitleBar";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { DEFAULT_SETTINGS, clipflow } from "./lib/bridge";
 import { formatBytes, formatDuration } from "./lib/format";
+import { playSaveSound } from "./lib/sound";
 import type {
   AppSettings,
   ClipMetadata,
@@ -15,7 +18,7 @@ import type {
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 
 const IDLE_STATS: EngineStats = {
   state: "idle",
@@ -62,6 +65,8 @@ const TONE_STYLES: Record<ToastTone, string> = {
   info: "border-cyan-300/40 bg-cyan-400/10 text-cyan-100",
 };
 
+type SortKey = "newest" | "oldest" | "largest" | "smallest" | "longest" | "shortest";
+
 export default function App() {
   const [stats, setStats] = useState<EngineStats>(IDLE_STATS);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -73,8 +78,19 @@ export default function App() {
   const [activeClip, setActiveClip] = useState<ClipMetadata | null>(null);
   const [activeFlushMs, setActiveFlushMs] = useState<number | undefined>(undefined);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [lastFlushMs, setLastFlushMs] = useState<number | null>(null);
+  const [flushHistory, setFlushHistory] = useState<number[]>([]);
   const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [audioOnly, setAudioOnly] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [onboarding, setOnboarding] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("clipflow.onboarding.seen") !== "1";
+    } catch {
+      return false;
+    }
+  });
 
   const native = clipflow.isTauri();
   const toastId = useRef(0);
@@ -117,6 +133,23 @@ export default function App() {
       }
       await refreshClips();
 
+      // Silent auto-update probe (native only): no toast unless a newer
+      // GitHub release actually exists. Never blocks startup.
+      if (clipflow.isTauri()) {
+        try {
+          const update = await check();
+          if (update && !cancelled) {
+            pushToast(
+              "info",
+              `Update v${update.version} available`,
+              "Open Settings → About & Updates → CHECK FOR UPDATES to install.",
+            );
+          }
+        } catch {
+          /* updater unreachable — ignore */
+        }
+      }
+
       // In the browser the Rust autostart does not exist — arm the simulated
       // engine so the deck is alive immediately.
       if (!clipflow.isTauri()) {
@@ -153,7 +186,8 @@ export default function App() {
       Promise.resolve(
         clipflow.onClipSaved((payload: ClipSavedPayload) => {
           setClips((prev) => [payload.clip, ...prev.filter((c) => c.path !== payload.clip.path)]);
-          setLastFlushMs(payload.flushMs);
+          setFlushHistory((h) => [...h.slice(-19), payload.flushMs]);
+          if (settingsRef.current.playSaveSound) playSaveSound();
           pushToast(
             "ok",
             `Clip saved in ${payload.flushMs.toFixed(1)} ms`,
@@ -221,20 +255,30 @@ export default function App() {
   // Browser shim for the global hotkey (Tauri registers the real one in Rust).
   useEffect(() => {
     if (clipflow.isTauri()) return;
+    const save = settings.hotkeySave.split("+").map((s) => s.trim().toLowerCase());
+    const toggle = settings.hotkeyToggle.split("+").map((s) => s.trim().toLowerCase());
     const onKey = (e: KeyboardEvent) => {
       if (clipflow.isTauri()) return;
-      if (e.altKey && !e.ctrlKey && (e.key === "c" || e.key === "C" || e.code === "KeyC")) {
+      const pressed = (k: string[]) =>
+        k.length >= 2 &&
+        k.includes("alt") === e.altKey &&
+        k.includes("ctrl") === e.ctrlKey &&
+        k.includes("shift") === e.shiftKey &&
+        k.includes("win") === e.metaKey &&
+        k.some((t) => e.key.toLowerCase() === t || e.code.toLowerCase() === t);
+      if (pressed(save)) {
         e.preventDefault();
-        if (e.shiftKey) void handleToggle();
-        else {
-          clipflow.emitLocalHotkey("Alt+C");
-          void handleSave();
-        }
+        clipflow.emitLocalHotkey(settings.hotkeySave);
+        void handleSave();
+      } else if (pressed(toggle)) {
+        e.preventDefault();
+        clipflow.emitLocalHotkey(settings.hotkeyToggle);
+        void handleToggle();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleSave, handleToggle]);
+  }, [handleSave, handleToggle, settings.hotkeySave, settings.hotkeyToggle]);
 
   const patchSettings = useCallback(
     async (patch: Partial<AppSettings>) => {
@@ -248,6 +292,34 @@ export default function App() {
     },
     [pushToast],
   );
+
+  const checkForUpdates = useCallback(async () => {
+    if (!native) {
+      // Browser preview has no updater — fall back to the Releases page.
+      await clipflow.openReleasesPage();
+      return;
+    }
+    setBusy(true);
+    try {
+      const update = await check();
+      if (!update) {
+        pushToast("ok", "Up to date", `ClipFlow v${APP_VERSION} is the latest release.`);
+        return;
+      }
+      pushToast(
+        "info",
+        `Update v${update.version} available`,
+        "Downloading & installing — ClipFlow will restart.",
+      );
+      await update.downloadAndInstall();
+      pushToast("ok", "Update installed", "Restarting ClipFlow…");
+      await relaunch();
+    } catch (e) {
+      pushToast("err", "Update check failed", String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [native, pushToast]);
 
   const restartEngine = useCallback(async () => {
     setBusy(true);
@@ -327,20 +399,126 @@ export default function App() {
     [activeClip, pushToast, refreshClips],
   );
 
+  const renameClip = useCallback(
+    async (clip: ClipMetadata, newName: string) => {
+      if (!newName.trim() || newName.trim() === clip.file_name) return;
+      try {
+        const path = await clipflow.renameClip(clip.path, newName.trim());
+        const file_name = path.split(/[\\/]/).pop() ?? newName.trim();
+        setActiveClip((c) =>
+          c?.path === clip.path
+            ? {
+                ...c,
+                path,
+                file_name,
+                title: file_name.replace(/\.mp4$/i, "").replace(/_/g, " "),
+              }
+            : c,
+        );
+        await refreshClips();
+        pushToast("ok", "Clip renamed", file_name);
+      } catch (e) {
+        pushToast("err", "Rename failed", String(e));
+      }
+    },
+    [pushToast, refreshClips],
+  );
+
+  const openExternalClip = useCallback(
+    async (clip: ClipMetadata) => {
+      try {
+        await clipflow.openClip(clip.path);
+        if (!native) pushToast("info", "No external player in browser preview", clip.path);
+      } catch (e) {
+        pushToast("err", "Could not open clip", String(e));
+      }
+    },
+    [native, pushToast],
+  );
+
+  const snapshotClip = useCallback(
+    async (clip: ClipMetadata, pngBase64: string) => {
+      try {
+        const base = clip.file_name.replace(/\.mp4$/i, "").replace(/_/g, " ");
+        const path = await clipflow.snapshotToOutput(pngBase64, base);
+        pushToast(
+          "ok",
+          "Frame saved as PNG",
+          native ? path : "Snapshot downloaded",
+        );
+      } catch (e) {
+        pushToast("err", "Snapshot failed", String(e));
+      }
+    },
+    [native, pushToast],
+  );
+
+  const clearLibrary = useCallback(async () => {
+    setConfirmClear(false);
+    setBusy(true);
+    try {
+      const deleted = await clipflow.deleteAllClips();
+      await refreshClips();
+      if (activeClip) setActiveClip(null);
+      pushToast(
+        "warn",
+        deleted > 0 ? `Deleted ${deleted} clip${deleted === 1 ? "" : "s"}` : "Library is already empty",
+      );
+    } catch (e) {
+      pushToast("err", "Could not clear library", String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [activeClip, pushToast, refreshClips]);
+
   // ---------------------------------------------------------------- derived
   const armed = stats.state === "buffering" || stats.state === "flushing";
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return clips;
-    return clips.filter(
-      (c) => c.title.toLowerCase().includes(q) || c.file_name.toLowerCase().includes(q),
-    );
-  }, [clips, query]);
+    const list = clips.filter((c) => {
+      const matchesQuery =
+        !q || c.title.toLowerCase().includes(q) || c.file_name.toLowerCase().includes(q);
+      const matchesAudio = !audioOnly || c.has_audio;
+      return matchesQuery && matchesAudio;
+    });
+    const sorted = [...list];
+    switch (sortKey) {
+      case "oldest":
+        sorted.sort((a, b) => a.created_unix_ms - b.created_unix_ms);
+        break;
+      case "largest":
+        sorted.sort((a, b) => b.size_bytes - a.size_bytes);
+        break;
+      case "smallest":
+        sorted.sort((a, b) => a.size_bytes - b.size_bytes);
+        break;
+      case "longest":
+        sorted.sort((a, b) => b.duration_seconds - a.duration_seconds);
+        break;
+      case "shortest":
+        sorted.sort((a, b) => a.duration_seconds - b.duration_seconds);
+        break;
+      default:
+        sorted.sort((a, b) => b.created_unix_ms - a.created_unix_ms);
+    }
+    return sorted;
+  }, [clips, query, audioOnly, sortKey]);
 
   const totalBytes = useMemo(
     () => clips.reduce((acc, c) => acc + c.size_bytes, 0),
     [clips],
   );
+
+  const flushStats = useMemo(() => {
+    const h = flushHistory;
+    if (h.length === 0) return null;
+    const avg = h.reduce((a, b) => a + b, 0) / h.length;
+    return {
+      last: h[h.length - 1],
+      avg,
+      best: Math.min(...h),
+    };
+  }, [flushHistory]);
 
   return (
     <div className="bg-aurora relative flex h-screen w-screen flex-col overflow-hidden bg-[#05060d]">
@@ -370,13 +548,59 @@ export default function App() {
                     {clips.length} clips · {formatBytes(totalBytes)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <input
+                    name="clip-filter"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Filter clips…"
-                    className="w-44 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
+                    className="w-40 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
                   />
+                  <select
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value as SortKey)}
+                    title="Sort clips"
+                    className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 font-mono text-[11px] text-slate-300 outline-none transition hover:border-white/25 focus:border-cyan-300/50"
+                  >
+                    <option value="newest" className="bg-[#0a0d1a]">NEWEST</option>
+                    <option value="oldest" className="bg-[#0a0d1a]">OLDEST</option>
+                    <option value="largest" className="bg-[#0a0d1a]">LARGEST</option>
+                    <option value="smallest" className="bg-[#0a0d1a]">SMALLEST</option>
+                    <option value="longest" className="bg-[#0a0d1a]">LONGEST</option>
+                    <option value="shortest" className="bg-[#0a0d1a]">SHORTEST</option>
+                  </select>
+                  <button
+                    onClick={() => setAudioOnly((v) => !v)}
+                    title="Only clips with audio"
+                    className={cn(
+                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      audioOnly
+                        ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
+                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                    )}
+                  >
+                    ♪ AUDIO
+                  </button>
+                  <button
+                    onClick={() => setCompact((v) => !v)}
+                    title="Compact grid"
+                    className={cn(
+                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      compact
+                        ? "border-cyan-300/60 bg-cyan-400/15 text-cyan-100"
+                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                    )}
+                  >
+                    ▦ COMPACT
+                  </button>
+                  <button
+                    onClick={() => setConfirmClear(true)}
+                    disabled={clips.length === 0}
+                    title="Delete every clip"
+                    className="rounded-lg border border-rose-500/30 px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] text-rose-300/90 transition hover:border-rose-400/60 hover:bg-rose-500/10 disabled:opacity-35"
+                  >
+                    ✕ CLEAR
+                  </button>
                   <button
                     onClick={() => void refreshClips()}
                     className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
@@ -395,12 +619,14 @@ export default function App() {
               <GalleryGrid
                 clips={filtered}
                 loading={loadingClips}
+                compact={compact}
                 onOpen={(c) => {
                   setActiveClip(c);
                   setActiveFlushMs(undefined);
                 }}
                 onCopy={(c) => void copyClip(c)}
                 onReveal={(c) => void revealClip(c)}
+                onOpenExternal={(c) => void openExternalClip(c)}
                 onDelete={(c) => void deleteClip(c)}
               />
             </section>
@@ -413,11 +639,23 @@ export default function App() {
                 <h3 className="font-mono text-[11px] tracking-[0.24em] text-cyan-300">
                   INSTANT REPLAY
                 </h3>
-                {lastFlushMs !== null && (
-                  <span className="font-mono text-[10px] text-lime-300">
-                    last flush {lastFlushMs.toFixed(1)} ms
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5 font-mono text-[9px] tracking-[0.1em]">
+                  {flushStats ? (
+                    <>
+                      <span className="rounded border border-lime-400/30 bg-lime-400/10 px-1.5 py-0.5 text-lime-200">
+                        LAST {flushStats.last.toFixed(1)} MS
+                      </span>
+                      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-400">
+                        AVG {flushStats.avg.toFixed(1)} MS
+                      </span>
+                      <span className="rounded border border-fuchsia-400/30 bg-fuchsia-500/10 px-1.5 py-0.5 text-fuchsia-200">
+                        BEST {flushStats.best.toFixed(1)} MS
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-slate-600">NO FLUSHES THIS SESSION</span>
+                  )}
+                </div>
               </div>
 
               <button
@@ -480,10 +718,12 @@ export default function App() {
                 settings={settings}
                 stats={stats}
                 monitors={monitors}
+                version={APP_VERSION}
                 native={native}
                 onChange={(p) => void patchSettings(p)}
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}
+                onCheckForUpdates={() => void checkForUpdates()}
                 onSimulateDeviceLoss={() => {
                   clipflow.simulateDeviceLoss();
                   pushToast("warn", "Simulating DXGI_ERROR_ACCESS_LOST", "Rebuilding D3D11 device + duplication…");
@@ -524,11 +764,65 @@ export default function App() {
           onClose={() => setActiveClip(null)}
           onCopy={() => copyClip(activeClip)}
           onReveal={() => revealClip(activeClip)}
+          onOpenExternal={() => void openExternalClip(activeClip)}
+          onRename={(name) => void renameClip(activeClip, name)}
+          onSnapshot={(png) => void snapshotClip(activeClip, png)}
           onDiscard={async () => {
             await deleteClip(activeClip);
             setActiveClip(null);
           }}
           onSaveTrimmed={saveTrimmed}
+        />
+      )}
+
+      {/* Clear-library confirm */}
+      {confirmClear && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center p-4">
+          <div
+            className="animate-fade absolute inset-0 bg-[#04050c]/80 backdrop-blur-sm"
+            onClick={() => setConfirmClear(false)}
+          />
+          <div className="animate-pop panel relative z-10 w-full max-w-sm rounded-2xl p-5">
+            <div className="font-mono text-[12px] font-semibold tracking-[0.2em] text-rose-300">
+              DELETE EVERYTHING?
+            </div>
+            <p className="mt-2 text-[12px] leading-relaxed text-slate-400">
+              This permanently removes all {clips.length} clip
+              {clips.length === 1 ? "" : "s"} from the ClipFlow folder. This cannot
+              be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={() => void clearLibrary()}
+                disabled={busy}
+                className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-rose-100 transition hover:bg-rose-500/25 disabled:opacity-50"
+              >
+                DELETE ALL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* First-run onboarding */}
+      {onboarding && (
+        <OnboardingOverlay
+          hotkeySave={settings.hotkeySave}
+          hotkeyToggle={settings.hotkeyToggle}
+          onDismiss={() => {
+            setOnboarding(false);
+            try {
+              localStorage.setItem("clipflow.onboarding.seen", "1");
+            } catch {
+              /* ignore */
+            }
+          }}
         />
       )}
     </div>
@@ -616,5 +910,87 @@ function PipelinePanel({ stats }: { stats: EngineStats }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** First-run overlay: teaches the two hotkeys before the user alt-tabs away. */
+function OnboardingOverlay({
+  hotkeySave,
+  hotkeyToggle,
+  onDismiss,
+}: {
+  hotkeySave: string;
+  hotkeyToggle: string;
+  onDismiss: () => void;
+}) {
+  const steps = [
+    {
+      kbd: hotkeySave,
+      title: "Save the last moments",
+      body: "Flushes the GPU-encoded ring buffer to an MP4 in under 50 ms — mid-game, without alt-tabbing.",
+      tone: "border-cyan-300/40 text-cyan-200",
+    },
+    {
+      kbd: hotkeyToggle,
+      title: "Arm / disarm the buffer",
+      body: "Toggles the rolling history in RAM. Leave it armed while you play; it costs under 100 MB.",
+      tone: "border-lime-300/40 text-lime-200",
+    },
+    {
+      kbd: "Videos\\ClipFlow",
+      title: "Everything lands in one folder",
+      body: "Clips, trims and snapshots are stored in %USERPROFILE%\\Videos\\ClipFlow. No cloud, no account.",
+      tone: "border-fuchsia-300/40 text-fuchsia-200",
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="animate-fade absolute inset-0 bg-[#04050c]/92 backdrop-blur-xl" />
+      <div className="animate-pop panel noise relative z-10 w-full max-w-lg rounded-2xl p-6">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-cyan-400 to-fuchsia-500 shadow-[0_0_24px_-4px_#5eeaff]">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 text-black" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-mono text-sm font-semibold tracking-[0.24em] text-slate-100">
+              CLIPFLOW 1.1
+            </div>
+            <div className="mt-0.5 font-mono text-[10px] tracking-[0.18em] text-slate-500">
+              INSTANT REPLAY · THREE MOVES
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {steps.map((s, i) => (
+            <div
+              key={s.title}
+              className="flex items-start gap-3 rounded-xl border border-white/8 bg-black/30 p-3"
+            >
+              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-white/15 font-mono text-[10px] text-slate-400">
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-slate-100">{s.title}</div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{s.body}</div>
+              </div>
+              <kbd className={cn("shrink-0 rounded border bg-black/50 px-2 py-1 font-mono text-[10px] tracking-[0.12em]", s.tone)}>
+                {s.kbd}
+              </kbd>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={onDismiss}
+          className="mt-5 w-full rounded-xl border border-cyan-300/50 bg-cyan-400/15 py-2.5 font-mono text-[11px] font-semibold tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-400/25"
+        >
+          GOT IT — START CLIPPING
+        </button>
+      </div>
+    </div>
   );
 }
