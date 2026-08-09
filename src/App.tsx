@@ -58,6 +58,7 @@ const IDLE_STATS: EngineStats = {
   audio_system: true,
   audio_mic: false,
   audio_drift_ms: 0,
+  audio_error: null,
   uptime_seconds: 0,
   last_error: null,
 };
@@ -804,6 +805,24 @@ export default function App() {
     [clips],
   );
 
+  // Surface audio capture failures (device busy / exclusive mode) the moment
+  // they happen — the old behaviour hid them behind a stderr log line.
+  const lastAudioError = useRef<string | null>(null);
+  useEffect(() => {
+    const cur = stats.audio_error ?? null;
+    if (cur === lastAudioError.current) return;
+    lastAudioError.current = cur;
+    if (cur) {
+      pushToast(
+        "warn",
+        "Audio capture unavailable",
+        `${cur} — retrying automatically. Clips save with video only until it recovers.`,
+      );
+    } else if (settings.captureSystemAudio || settings.captureMicrophone) {
+      pushToast("ok", "Audio capture recovered", "System audio is being recorded again.");
+    }
+  }, [stats.audio_error, settings.captureSystemAudio, settings.captureMicrophone, pushToast]);
+
   // Keep the always-on-top HUD in sync with the armed state + the setting.
   // Only calls the backend when the visible-state actually flips.
   const lastHudVisible = useRef<boolean | null>(null);
@@ -1246,10 +1265,12 @@ function PipelinePanel({ stats }: { stats: EngineStats }) {
     },
     {
       name: "WASAPI loopback + AAC",
-      detail: stats.audio_system
-        ? `48 kHz stereo · drift ${stats.audio_drift_ms.toFixed(2)} ms`
-        : "disabled",
-      ok: stats.audio_system && armed,
+      detail: stats.audio_error
+        ? `⚠ ${stats.audio_error}`
+        : stats.audio_system
+          ? `48 kHz stereo · drift ${stats.audio_drift_ms.toFixed(2)} ms`
+          : "disabled",
+      ok: stats.audio_system && armed && !stats.audio_error,
     },
     {
       name: "MP4 sink writer",

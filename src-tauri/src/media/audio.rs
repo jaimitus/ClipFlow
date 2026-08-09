@@ -28,11 +28,15 @@ pub struct AudioCapture {
 }
 
 impl AudioCapture {
+    /// `status` is the engine's shared audio-error slot: the thread writes the
+    /// reason it cannot capture (endpoint busy, AAC missing...) so the UI can
+    /// show *why* clips come out without audio instead of guessing.
     pub fn start(
         system: bool,
         mic: bool,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
+        status: Arc<Mutex<Option<String>>>,
     ) -> Result<Self, RecorderError> {
         let stop = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::new();
@@ -41,10 +45,11 @@ impl AudioCapture {
             let stop_c = Arc::clone(&stop);
             let ring_c = Arc::clone(&ring);
             let gen_c = Arc::clone(&generation);
+            let status_c = Arc::clone(&status);
             let h = std::thread::Builder::new()
                 .name("clipflow-audio".into())
                 .spawn(move || {
-                    imp::run(system, mic, stop_c, ring_c, gen_c);
+                    imp::run(system, mic, stop_c, ring_c, gen_c, status_c);
                 })
                 .map_err(|e| RecorderError::Other(format!("audio thread: {e}")))?;
             handles.push(h);
@@ -315,59 +320,56 @@ mod imp {
         }
     }
 
+    /// Opens an endpoint, reporting the failure reason into `status`. Returns
+    /// `Ok(Some(ep))` on success, `Ok(None)` when the feature is disabled, and
+    /// `Err` when the endpoint could not be opened (the shared `status` slot
+    /// already carries the human-readable reason).
+    unsafe fn open_reported(
+        loopback: bool,
+        status: &Mutex<Option<String>>,
+    ) -> Result<Option<Endpoint>, ()> {
+        match open_endpoint(loopback) {
+            Ok(ep) => Ok(Some(ep)),
+            Err(e) => {
+                let msg = if loopback {
+                    format!("system audio loopback unavailable: {e}")
+                } else {
+                    format!("microphone unavailable: {e}")
+                };
+                *status.lock() = Some(msg.clone());
+                log::warn!("[clipflow::audio] {msg}");
+                Err(())
+            }
+        }
+    }
+
     pub(super) fn run(
         system: bool,
         mic: bool,
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
+        status: Arc<Mutex<Option<String>>>,
     ) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             if MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).is_err() {
+                *status.lock() = Some("Media Foundation failed to start".into());
                 CoUninitialize();
                 return;
             }
 
-            let loopback = if system {
-                match open_endpoint(true) {
-                    Ok(e) => Some(e),
-                    Err(e) => {
-                        log::warn!("[clipflow::audio] loopback endpoint failed: {e}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            let microphone = if mic {
-                match open_endpoint(false) {
-                    Ok(e) => Some(e),
-                    Err(e) => {
-                        log::warn!("[clipflow::audio] mic endpoint failed: {e}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            if loopback.is_none() && microphone.is_none() {
-                let _ = MFShutdown();
-                CoUninitialize();
-                return;
-            }
-
-            let encoder = match AacEncoder::new() {
-                Ok(e) => e,
-                Err(e) => {
-                    log::warn!("[clipflow::audio] AAC MFT unavailable: {e}");
-                    let _ = MFShutdown();
-                    CoUninitialize();
-                    return;
-                }
-            };
+            // Loopback + the AAC encoder are both *retried* forever: a game
+            // holding the render device in exclusive mode makes the very first
+            // `Initialize` fail with AUDCLNT_E_DEVICE_IN_USE (0x8889000A), and
+            // the AAC MFT can briefly be contended on system wake. ClipFlow
+            // must keep the buffer armed with video while audio sorts itself
+            // out, then join seamlessly — never silently produce audio-less
+            // clips for the whole session.
+            let mut loopback: Option<Endpoint> = None;
+            let mut microphone: Option<Endpoint> = None;
+            let mut encoder: Option<AacEncoder> = None;
+            let mut last_attempt = std::time::Instant::now();
 
             let mut freq = 0i64;
             let _ = QueryPerformanceFrequency(&mut freq);
@@ -384,6 +386,45 @@ mod imp {
             let mut qpc_first: Option<i64> = None;
 
             while !stop.load(Ordering::Acquire) {
+                // (Re)open endpoints every second until the device is free.
+                if last_attempt.elapsed() >= std::time::Duration::from_secs(1) {
+                    last_attempt = std::time::Instant::now();
+                    if system && loopback.is_none() {
+                        match open_reported(true, &status) {
+                            Ok(Some(ep)) => loopback = Some(ep),
+                            Ok(None) => {}
+                            Err(()) => {}
+                        }
+                    }
+                    if mic && microphone.is_none() {
+                        match open_reported(false, &status) {
+                            Ok(Some(ep)) => microphone = Some(ep),
+                            Ok(None) => {}
+                            Err(()) => {}
+                        }
+                    }
+                    if encoder.is_none() && (loopback.is_some() || microphone.is_some()) {
+                        match AacEncoder::new() {
+                            Ok(e) => {
+                                encoder = Some(e);
+                                *status.lock() = None;
+                            }
+                            Err(e) => {
+                                *status.lock() =
+                                    Some(format!("AAC encoder unavailable: {e}"));
+                                log::warn!("[clipflow::audio] AAC MFT: {e}");
+                            }
+                        }
+                    }
+                }
+
+                if loopback.is_none() && microphone.is_none() {
+                    // Nothing captured yet (device busy). Keep the thread alive
+                    // and keep retrying; the video side is unaffected.
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                    continue;
+                }
+
                 if let Some(ep) = loopback.as_ref() {
                     drain_endpoint(ep, &mut pending, &mut qpc_first);
                 }
@@ -408,6 +449,16 @@ mod imp {
                     }
                 }
 
+                let Some(enc) = encoder.as_ref() else {
+                    // Encoder not ready: cap the pending queue so a stalled AAC
+                    // MFT cannot grow the loopback history without bound.
+                    if pending.len() > FRAME_SAMPLES * 16 {
+                        pending.drain(..pending.len() - FRAME_SAMPLES * 16);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                    continue;
+                };
+
                 let epoch = qpc_first.unwrap_or(origin);
                 while pending.len() >= FRAME_SAMPLES {
                     pcm.clear();
@@ -424,7 +475,7 @@ mod imp {
 
                     let gen = generation.load(Ordering::Acquire);
                     let ring_ref = &ring;
-                    let _ = encoder.encode(&pcm, pts, |payload, t, d| {
+                    let _ = enc.encode(&pcm, pts, |payload, t, d| {
                         ring_ref.lock().push(EncodedPacket {
                             track: TrackKind::Audio,
                             data: Arc::from(payload.into_boxed_slice()),
@@ -465,6 +516,7 @@ mod imp {
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
+        _status: Arc<Mutex<Option<String>>>,
     ) {
         // 21.3 ms AAC frames of silence keep the muxer path exercised.
         let frame_hns = 1024 * HNS_PER_SECOND / SAMPLE_RATE as i64;

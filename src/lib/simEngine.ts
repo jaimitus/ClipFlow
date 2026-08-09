@@ -351,6 +351,7 @@ export class SimEngine {
       audio_system: true,
       audio_mic: false,
       audio_drift_ms: this.running ? (Math.sin(performance.now() / 4200) * 1.4) : 0,
+      audio_error: null,
       uptime_seconds: this.running ? (performance.now() - this.startedAt) / 1000 : 0,
       last_error: this.lastError,
     };

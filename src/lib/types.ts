@@ -47,6 +47,8 @@ export interface EngineStats {
   audio_system: boolean;
   audio_mic: boolean;
   audio_drift_ms: number;
+  /** Why audio is missing (device in exclusive mode, AAC failure...), if any. */
+  audio_error: string | null;
   uptime_seconds: number;
   last_error: string | null;
 }

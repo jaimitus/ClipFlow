@@ -191,6 +191,10 @@ pub struct EngineStats {
     pub audio_system: bool,
     pub audio_mic: bool,
     pub audio_drift_ms: f32,
+    /// `Some(reason)` when the WASAPI/AAC audio path could not produce audio
+    /// (e.g. the render device is held in exclusive mode by a game). Null when
+    /// audio is healthy or disabled. The UI surfaces this on the deck.
+    pub audio_error: Option<String>,
     pub uptime_seconds: u64,
     pub last_error: Option<String>,
 }
@@ -514,6 +518,8 @@ pub struct CaptureEngine {
     config: RwLock<RecorderConfig>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     audio: Mutex<Option<crate::media::audio::AudioCapture>>,
+    /// Written by the audio thread: the reason audio is unavailable, if any.
+    audio_error: Arc<parking_lot::Mutex<Option<String>>>,
     /// Set by the muxer thread once the first flush produced a valid header.
     video_format: Arc<Mutex<Option<VideoFormatHeader>>>,
 }
@@ -540,6 +546,7 @@ impl CaptureEngine {
             config: RwLock::new(cfg),
             worker: Mutex::new(None),
             audio: Mutex::new(None),
+            audio_error: Arc::new(parking_lot::Mutex::new(None)),
             video_format: Arc::new(Mutex::new(None)),
         }
     }
@@ -581,6 +588,7 @@ impl CaptureEngine {
             audio_system: cfg.capture_system_audio,
             audio_mic: cfg.capture_microphone,
             audio_drift_ms: *self.shared.audio_drift_ms.read(),
+            audio_error: self.audio_error.lock().clone(),
             uptime_seconds: self
                 .shared
                 .started_at
@@ -618,15 +626,25 @@ impl CaptureEngine {
         // Audio first: WASAPI needs a couple of hundred ms to spin up its
         // endpoint, and starting it early keeps A/V aligned from frame zero.
         if cfg.capture_system_audio || cfg.capture_microphone {
+            // Fresh engine → clear the previous run's audio error (the thread
+            // re-populates it if it still cannot capture).
+            *self.audio_error.lock() = None;
             match crate::media::audio::AudioCapture::start(
                 cfg.capture_system_audio,
                 cfg.capture_microphone,
                 Arc::clone(&self.shared.ring),
                 Arc::clone(&self.shared.generation),
+                Arc::clone(&self.audio_error),
             ) {
                 Ok(a) => *self.audio.lock() = Some(a),
-                Err(e) => log::warn!("[clipflow::audio] disabled: {e}"),
+                Err(e) => {
+                    *self.audio_error.lock() =
+                        Some(format!("audio thread could not start: {e}"));
+                    log::warn!("[clipflow::audio] disabled: {e}");
+                }
             }
+        } else {
+            *self.audio_error.lock() = None;
         }
 
         let shared = Arc::clone(&self.shared);
