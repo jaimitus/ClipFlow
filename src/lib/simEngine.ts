@@ -431,6 +431,18 @@ export class SimEngine {
     this.clips = this.clips.filter((c) => c.path !== path);
   }
 
+  /** Removes simulated clips older than `days`; returns how many were removed. */
+  cleanupOldClips(days: number): number {
+    const cutoff = Date.now() - days * 86_400_000;
+    const before = this.clips.length;
+    const keep = this.clips.filter((c) => c.created_unix_ms >= cutoff);
+    for (const c of this.clips) {
+      if (c.created_unix_ms < cutoff && c.preview_url) URL.revokeObjectURL(c.preview_url);
+    }
+    this.clips = keep;
+    return before - keep.length;
+  }
+
   /** Removes every simulated clip; returns how many were removed. */
   clearAll(): number {
     const count = this.clips.length;

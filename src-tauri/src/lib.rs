@@ -32,6 +32,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // Optional "launch at Windows sign-in". Kept entirely native (Rust
+        // calls only), so no extra JS surface or capability is needed.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         // GitHub Releases auto-updater — check() / downloadAndInstall() are
         // driven from the UI; nothing runs in the background.
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -66,6 +72,19 @@ pub fn run() {
                         .unwrap_or_else(|| s.to_recorder_config()),
                 )
             };
+
+            // Keep the Windows Run key in sync with the saved preference.
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let want = handle.state::<AppState>().settings.read().launch_at_startup;
+                let autostart = handle.autolaunch();
+                let is_on = autostart.is_enabled().unwrap_or(false);
+                if want && !is_on {
+                    let _ = autostart.enable();
+                } else if !want && is_on {
+                    let _ = autostart.disable();
+                }
+            }
 
             if let Err(e) = hotkeys::register_all(&handle, &save_key, &toggle_key) {
                 log::warn!("[clipflow] hotkey registration: {e}");
@@ -178,6 +197,7 @@ pub fn run() {
             commands::delete_profile,
             commands::set_profile_map,
             commands::apply_profile,
+            commands::cleanup_old_clips,
             commands::set_save_hotkey,
             commands::set_toggle_hotkey,
             commands::open_releases_page,

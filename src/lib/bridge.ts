@@ -161,6 +161,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ],
   profileMap: [],
   autoSwitchProfiles: false,
+  launchAtStartup: false,
+  autoCleanupDays: 0,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -429,6 +431,31 @@ export const clipflow = {
       codec: profile?.codec ?? browserSettings.codec,
     };
     return browserSettings;
+  },
+
+  /** Removes clips older than `days`; resolves to the number deleted. */
+  async cleanupOldClips(days: number): Promise<number> {
+    if (isTauri()) return invoke<number>("cleanup_old_clips", { days });
+    return simEngine.cleanupOldClips(days);
+  },
+
+  /**
+   * Posts a native Windows toast (best-effort). Browser preview no-ops.
+   */
+  async notify(title: string, body?: string): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const mod = await import("@tauri-apps/plugin-notification");
+      let granted = await mod.isPermissionGranted();
+      if (!granted) {
+        granted = (await mod.requestPermission()) === "granted";
+      }
+      if (granted) {
+        mod.sendNotification({ title, body });
+      }
+    } catch {
+      /* notification unavailable — the in-app toast already covers it */
+    }
   },
 
   async getMonitors(): Promise<MonitorInfo[]> {

@@ -25,11 +25,11 @@
 
 Designed for gamers and creators who demand maximum FPS and instant clipping without background resource hogging, ClipFlow continuously records your active display into a rolling memory buffer directly on your GPU. Pressing `Alt + C` instantly flushes your buffer to an MP4 video file in **under 50 milliseconds**.
 
-> ### 🆕 What's new in **1.1.2**
-> - 🎮 **Per-game capture profiles** — make 3-4 generic presets (Default / Competitivo / Cine) and map your games to them, ShadowPlay style.
-> - 🤖 **Auto-switch by foreground game** — ClipFlow detects which game is in focus and applies its profile automatically; unmapped games fall back to Default.
-> - 🗺️ **Game mapping editor** in Settings -> CAPTURE PROFILES, plus a live **GAME - PROFILE** chip on the deck.
-> - Plus everything from 1.1.1 & 1.1.0: signed auto-updates, custom hotkeys, HEVC, PNG snapshots, rename, trimmer and gallery tools.
+> ### 🆕 What's new in **1.1.3**
+> - 🗂️ **Three-tab navigation** (PIPELINE · PROFILES · SETTINGS) — profiles moved to their own tab, Settings got much shorter.
+> - ⚡ **One-click profile switch** on the deck (Default / Competitivo / Cine chips) + **Windows toast** when auto-switch changes your profile.
+> - 🖥️ **Launch at startup** hidden to tray, and 🧹 **auto cleanup** of clips older than 7/14/30/60 days.
+> - Everything from 1.1.2 & 1.1.0: per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC, snapshots and more.
 >
 > Full list in [CHANGELOG.md](CHANGELOG.md).
 
@@ -72,9 +72,9 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 
 ### 1. Download & Run
 Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.1.2_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.1.2_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.1.2_x64_en-US.msi` (Windows Installer)
+- **Standalone Portable:** `ClipFlow_v1.1.3_Portable.exe` (Single executable, no installation needed)
+- **Setup Installer:** `ClipFlow_1.1.3_x64-setup.exe` (NSIS Installer)
+- **MSI Package:** `ClipFlow_1.1.3_x64_en-US.msi` (Windows Installer)
 
 > 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 

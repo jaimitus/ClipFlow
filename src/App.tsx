@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BufferStatusCard from "./components/BufferStatusCard";
 import ClipTrimmerModal from "./components/ClipTrimmerModal";
 import GalleryGrid from "./components/GalleryGrid";
+import ProfilesPanel from "./components/ProfilesPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TitleBar from "./components/TitleBar";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -23,7 +24,7 @@ import type {
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.1.2";
+const APP_VERSION = "1.1.3";
 
 const IDLE_STATS: EngineStats = {
   state: "idle",
@@ -79,7 +80,7 @@ export default function App() {
   const [clips, setClips] = useState<ClipMetadata[]>([]);
   const [loadingClips, setLoadingClips] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"library" | "settings">("library");
+  const [tab, setTab] = useState<"pipeline" | "profiles" | "settings">("pipeline");
   const [activeClip, setActiveClip] = useState<ClipMetadata | null>(null);
   const [activeFlushMs, setActiveFlushMs] = useState<number | undefined>(undefined);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -130,6 +131,10 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Read the freshly loaded settings for the cleanup check below — the
+      // `settingsRef` still points at the render-time defaults here because
+      // React has not re-rendered yet.
+      let loaded: AppSettings | null = null;
       try {
         const [s, st, mons] = await Promise.all([
           clipflow.getSettings(),
@@ -137,11 +142,29 @@ export default function App() {
           clipflow.getMonitors(),
         ]);
         if (cancelled) return;
+        loaded = s;
         setSettings(s);
         setStats(st);
         setMonitors(mons);
       } catch {
         /* keep defaults */
+      }
+
+      // Auto-cleanup: delete clips older than the configured age (0 = off).
+      try {
+        const days = loaded?.autoCleanupDays ?? 0;
+        if (days > 0) {
+          const deleted = await clipflow.cleanupOldClips(days);
+          if (deleted > 0) {
+            pushToast(
+              "warn",
+              `Auto-cleanup removed ${deleted} clip${deleted === 1 ? "" : "s"}`,
+              `Older than ${days} days — folder is tidy.`,
+            );
+          }
+        }
+      } catch {
+        /* cleanup is best-effort */
       }
       await refreshClips();
 
@@ -314,7 +337,11 @@ export default function App() {
 
   // ------------------------------------------------- capture profiles
   const applyProfile = useCallback(
-    async (profileId: string) => {
+    async (
+      profileId: string,
+      source: "manual" | "auto" = "manual",
+      gameExe?: string | null,
+    ) => {
       if (busy) return;
       try {
         const prev = settingsRef.current;
@@ -336,11 +363,20 @@ export default function App() {
                 next.bitrateKbps / 1000
               ).toFixed(0)} Mb/s · live now`,
         );
+        // Native toast only for auto-switches (manual applies already toast in
+        // the deck and are usually deliberate, not background activity).
+        const exe = gameExe ?? foreground?.exe;
+        if (source === "auto" && profile && exe) {
+          void clipflow.notify(
+            `${profile.name} profile active`,
+            `${exe} — buffer ${next.bufferSeconds}s`,
+          );
+        }
       } catch (e) {
         pushToast("err", "Could not apply profile", String(e));
       }
     },
-    [busy, pushToast],
+    [busy, foreground, pushToast],
   );
 
   const saveProfile = useCallback(
@@ -429,13 +465,13 @@ export default function App() {
       if (target) {
         if (target.id === activeProfileIdRef.current) return;
         lastApplyAt = now;
-        await applyProfileRef.current(target.id);
+        await applyProfileRef.current(target.id, "auto", exe);
       } else if (activeProfileIdRef.current && activeProfileIdRef.current !== "default") {
         // Unmapped game / desktop → back to the Default profile.
         const def = profiles.find((p) => p.id === "default");
         if (def) {
           lastApplyAt = now;
-          await applyProfileRef.current(def.id);
+          await applyProfileRef.current(def.id, "auto", exe);
         }
       }
     };
@@ -913,10 +949,34 @@ export default function App() {
                     : "GLOBAL"}
                 </span>
               </div>
+
+              {/* Quick profile switch — one click, no Settings needed. */}
+              {settings.profiles.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {settings.profiles.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => void applyProfile(p.id)}
+                      disabled={busy}
+                      title={`${p.name} — ${p.bufferSeconds >= 60 ? `${p.bufferSeconds / 60}m` : `${p.bufferSeconds}s`} buffer · ${(
+                        p.bitrateKbps / 1000
+                      ).toFixed(0)} Mb/s · ${p.codec.toUpperCase()}`}
+                      className={cn(
+                        "rounded-md border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                        activeProfileId === p.id
+                          ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
+                          : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                      )}
+                    >
+                      {p.name.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              )}
             </section>
 
             <div className="flex gap-2">
-              {(["library", "settings"] as const).map((t) => (
+              {(["pipeline", "profiles", "settings"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -927,7 +987,7 @@ export default function App() {
                       : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
                   )}
                 >
-                  {t === "library" ? "PIPELINE" : "SETTINGS"}
+                  {t === "pipeline" ? "PIPELINE" : t === "profiles" ? "PROFILES" : "SETTINGS"}
                 </button>
               ))}
             </div>
@@ -943,19 +1003,24 @@ export default function App() {
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}
                 onChooseFolder={() => void chooseOutputFolder()}
-                foreground={foreground}
-                activeProfileId={activeProfileId}
-                onApplyProfile={(id) => void applyProfile(id)}
-                onSaveProfile={saveProfile}
-                onDeleteProfile={(id) => void deleteProfile(id)}
-                onSetProfileMap={(map) => void setProfileMap(map)}
-                onRefreshForeground={() => void refreshForeground()}
                 updateProgress={updateProgress}
                 onCheckForUpdates={() => void checkForUpdates()}
                 onSimulateDeviceLoss={() => {
                   clipflow.simulateDeviceLoss();
                   pushToast("warn", "Simulating DXGI_ERROR_ACCESS_LOST", "Rebuilding D3D11 device + duplication…");
                 }}
+              />
+            ) : tab === "profiles" ? (
+              <ProfilesPanel
+                settings={settings}
+                foreground={foreground}
+                activeProfileId={activeProfileId}
+                onChange={(p) => void patchSettings(p)}
+                onApplyProfile={(id) => void applyProfile(id)}
+                onSaveProfile={saveProfile}
+                onDeleteProfile={(id) => void deleteProfile(id)}
+                onSetProfileMap={(map) => void setProfileMap(map)}
+                onRefreshForeground={() => void refreshForeground()}
               />
             ) : (
               <PipelinePanel stats={stats} />

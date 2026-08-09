@@ -452,6 +452,8 @@ pub struct SettingsPatch {
     pub hotkey_toggle: Option<String>,
     pub always_on_top: Option<bool>,
     pub auto_switch_profiles: Option<bool>,
+    pub launch_at_startup: Option<bool>,
+    pub auto_cleanup_days: Option<u32>,
 }
 
 #[tauri::command]
@@ -541,8 +543,48 @@ pub fn update_settings(
     if let Some(v) = patch.auto_switch_profiles {
         s.auto_switch_profiles = v;
     }
+    if let Some(v) = patch.launch_at_startup {
+        // Registry Run key lives with the OS; keep it in sync with the setting
+        // so a corrupt settings.json can never leave an unwanted autostart.
+        s.launch_at_startup = v;
+        use tauri_plugin_autostart::ManagerExt;
+        if v {
+            if let Err(e) = app.autolaunch().enable() {
+                return Err(format!("could not enable launch at startup: {e}"));
+            }
+        } else if let Err(e) = app.autolaunch().disable() {
+            return Err(format!("could not disable launch at startup: {e}"));
+        }
+    }
+    if let Some(v) = patch.auto_cleanup_days {
+        s.auto_cleanup_days = v;
+    }
     s.save()?;
     Ok(s.clone())
+}
+
+/// Deletes clips older than `days` from the output folder. Returns how many
+/// were removed so the UI can toast an exact count. Runs off the main thread.
+#[tauri::command]
+pub async fn cleanup_old_clips(state: State<'_, AppState>, days: u32) -> Result<u32, String> {
+    let dir = state.output_dir();
+    let days = days.max(1);
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    tauri::async_runtime::spawn_blocking(move || {
+        let clips = library::scan_directory(&dir, false).map_err(|e| e.to_string())?;
+        let mut deleted = 0u32;
+        for c in &clips {
+            let created = chrono::DateTime::from_timestamp_millis(c.created_unix_ms as i64);
+            if let Some(created) = created {
+                if created < cutoff && library::delete_clip(Path::new(&c.path)).is_ok() {
+                    deleted += 1;
+                }
+            }
+        }
+        Ok(deleted)
+    })
+    .await
+    .map_err(|e| format!("cleanup task panicked: {e}"))?
 }
 
 // ---------------------------------------------------------------------------

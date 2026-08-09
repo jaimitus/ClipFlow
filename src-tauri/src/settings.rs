@@ -63,6 +63,12 @@ pub struct Settings {
     /// When true, the mapped profile follows the game that has focus.
     #[serde(default)]
     pub auto_switch_profiles: bool,
+    /// Launch ClipFlow hidden to tray at Windows sign-in.
+    #[serde(default)]
+    pub launch_at_startup: bool,
+    /// Delete clips older than N days at launch (0 = keep everything).
+    #[serde(default)]
+    pub auto_cleanup_days: u32,
 }
 
 impl Default for Settings {
@@ -86,6 +92,8 @@ impl Default for Settings {
             profiles: Vec::new(),
             profile_map: Vec::new(),
             auto_switch_profiles: false,
+            launch_at_startup: false,
+            auto_cleanup_days: 0,
         }
     }
 }

@@ -116,6 +116,10 @@ export interface AppSettings {
   profileMap: ProfileMapEntry[];
   /** When on, the mapped profile follows the game that has focus. */
   autoSwitchProfiles: boolean;
+  /** Launch ClipFlow hidden to tray at Windows sign-in. */
+  launchAtStartup: boolean;
+  /** Delete clips older than N days at launch (0 = keep everything). */
+  autoCleanupDays: number;
 }
 
 /** One per-game capture preset. `id` is a stable slug like "competitivo". */

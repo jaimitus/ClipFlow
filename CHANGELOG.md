@@ -2,6 +2,16 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.1.3] - 2026-08-09
+
+### Added
+
+- **Three-tab navigation** — the side rail is now PIPELINE · PROFILES · SETTINGS. The capture profiles moved to their own tab, so Settings no longer scrolls forever.
+- **Quick profile switch in the deck** — one-click profile chips (Default / Competitivo / Cine) under the GAME · PROFILE indicator, no Settings needed.
+- **Native notification on auto profile switch** — Windows toast when the foreground game changes your capture profile (manual applies stay quiet).
+- **Launch at startup** — Settings → Workflow: start ClipFlow hidden to tray at Windows sign-in (registry Run key, kept in sync with the setting).
+- **Auto cleanup** — Settings → Workflow: delete clips older than 7/14/30/60 days at every launch to keep the folder tidy.
+
 ## [1.1.2] - 2026-08-09
 
 ### Added
