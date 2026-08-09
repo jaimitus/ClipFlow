@@ -16,6 +16,10 @@ permissions:
 
 jobs:
   release:
+    # Explicitly granted inside the job: the repo default is read-only, and
+    # release creation needs contents: write on the GITHUB_TOKEN.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
