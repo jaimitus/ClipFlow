@@ -125,21 +125,31 @@ pub fn trigger_save(app: AppHandle) {
         let game_folder = crate::commands::resolve_game_folder(&state, None);
         state.engine.set_output_subfolder(game_folder.clone());
 
+        // The foreground is sampled inside the same blocking task so a hung
+        // foreground window cannot stall the async runtime.
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = match flush_lock.try_lock() {
                 Some(g) => g,
                 None => {
-                    return Err(crate::media::recorder::RecorderError::Other(
-                        "Save replay already in progress".into(),
+                    return Err((
+                        crate::media::recorder::RecorderError::Other(
+                            "Save replay already in progress".into(),
+                        ),
+                        None,
                     ))
                 }
             };
-            engine.flush_to_disk(None)
+            let focused = crate::foreground::get_foreground_game();
+            let focused_err = focused.clone();
+            engine
+                .flush_to_disk(None)
+                .map(|w| (w, focused))
+                .map_err(|e| (e, focused_err))
         })
         .await;
 
         match result {
-            Ok(Ok(write)) => {
+            Ok(Ok((write, focused))) => {
                 let path = std::path::PathBuf::from(&write.path);
                 let thumbnail = crate::media::library::extract_thumbnail(
                     &path,
@@ -167,16 +177,44 @@ pub fn trigger_save(app: AppHandle) {
                     thumbnail,
                 };
 
+                // Never steal focus from a fullscreen game. Raising the deck
+                // mid-match minimises/pauses exclusive-fullscreen games, which
+                // is exactly what the user reported. Only raise ClipFlow when
+                // the user is already looking at it (or the desktop); when a
+                // game is in the foreground, confirm the save with a native
+                // Windows toast instead — toasts do not steal focus.
+                let focused_exe = focused
+                    .map(|g| g.exe.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let game_in_focus = !focused_exe.starts_with("clipflow")
+                    && !focused_exe.starts_with("explorer")
+                    && !focused_exe.is_empty();
+                let raise_deck = open_trimmer && !game_in_focus;
+
+                if game_in_focus && open_trimmer {
+                    use tauri_plugin_notification::NotificationExt;
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title("Clip saved")
+                        .body(format!(
+                            "{} · {:.0} ms",
+                            write.file_name, write.flush_ms
+                        ))
+                        .show();
+                }
+
                 let _ = app.emit(
                     crate::commands::EVT_CLIP_SAVED,
                     crate::commands::ClipSavedPayload {
                         clip,
                         flush_ms: write.flush_ms,
                         triggered_by: "hotkey".into(),
+                        open_trimmer: raise_deck,
                     },
                 );
 
-                if open_trimmer {
+                if raise_deck {
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.show();
                         let _ = w.unminimize();
@@ -184,7 +222,7 @@ pub fn trigger_save(app: AppHandle) {
                     }
                 }
             }
-            Ok(Err(e)) => {
+            Ok(Err((e, _))) => {
                 let _ = app.emit(EVT_ERROR, e.to_string());
             }
             Err(e) => {

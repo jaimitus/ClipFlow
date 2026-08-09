@@ -65,6 +65,11 @@ pub struct ClipSavedPayload {
     pub clip: ClipMetadata,
     pub flush_ms: f32,
     pub triggered_by: String,
+    /// Whether the frontend should open the trimmer automatically. The Rust
+    /// side decides so the hotkey path never raises the deck mid-game (that
+    /// would steal focus from a fullscreen-exclusive game).
+    #[serde(default)]
+    pub open_trimmer: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -230,12 +235,19 @@ pub async fn save_instant_replay(
         thumbnail,
     };
 
+    // Auto-saves must never interrupt the user; only explicit UI saves open
+    // the trimmer afterwards.
+    let open_trimmer = match triggered_by.as_deref() {
+        None | Some("ui") => state.settings.read().open_trimmer_after_save,
+        _ => false,
+    };
     let _ = app.emit(
         EVT_CLIP_SAVED,
         ClipSavedPayload {
             clip: clip.clone(),
             flush_ms: result.flush_ms,
             triggered_by: triggered_by.unwrap_or_else(|| "ui".into()),
+            open_trimmer,
         },
     );
 

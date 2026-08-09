@@ -243,7 +243,11 @@ export default function App() {
               payload.clip.size_bytes,
             )}`,
           );
-          if (settingsRef.current.openTrimmerAfterSave) {
+          // The Rust side decides: hotkey saves while a game has focus do NOT
+          // raise the deck (that would steal focus and minimise the game), so
+          // the trimmer must stay closed then. Browser sim falls back to the
+          // setting.
+          if (payload.openTrimmer ?? settingsRef.current.openTrimmerAfterSave) {
             setActiveClip(payload.clip);
             setActiveFlushMs(payload.flushMs);
           }

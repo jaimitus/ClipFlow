@@ -85,6 +85,13 @@ export interface ClipSavedPayload {
   clip: ClipMetadata;
   flushMs: number;
   triggeredBy: "hotkey" | "ui" | "tray" | string;
+  /**
+   * Whether the deck should open the trimmer. The Rust side sets this to
+   * false when a hotkey save happens while a game has focus (raising the
+   * deck would steal focus and minimise the game). Undefined = fall back to
+   * the user's `openTrimmerAfterSave` setting (browser sim).
+   */
+  openTrimmer?: boolean;
 }
 
 export interface MonitorInfo {
