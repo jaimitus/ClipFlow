@@ -339,6 +339,65 @@ pub async fn get_clip_thumbnail(path: String, at_seconds: Option<f32>) -> Result
     .map_err(|e| format!("thumbnail task panicked: {e}"))?
 }
 
+/// Splits a clip in two at `at_seconds` with two stream-copy trims.
+///
+/// Both halves run inside ONE blocking task so the Media Foundation sessions
+/// (startup/shutdown per trim) never overlap or race — back-to-back separate
+/// `trim_clip` invokes were flaky. A short pause between the two sessions
+/// lets the first MF instance tear down fully before the second starts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitResult {
+    pub part_a: TrimResult,
+    pub part_b: TrimResult,
+}
+
+#[tauri::command]
+pub async fn split_clip(source_path: String, at_seconds: f32) -> Result<SplitResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = PathBuf::from(&source_path);
+        if !source.exists() {
+            return Err(format!("source clip not found: {source_path}"));
+        }
+        // Use the probed duration so both halves stay inside the media even if
+        // the gallery's cached duration is stale.
+        let duration = library::probe(&source).map_err(|e| e.to_string())?.duration_seconds;
+        if duration <= 0.4 {
+            return Err("clip is too short to split".to_string());
+        }
+        let at = at_seconds.clamp(0.2, duration - 0.2);
+
+        let part_a = library::trim_stream_copy(
+            &source,
+            &library::suggested_trim_path(&source),
+            0.0,
+            at,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Beat for the first MF session to fully tear down (rapid
+        // MFStartup/MFShutdown churn is a known source of flaky failures).
+        std::thread::sleep(std::time::Duration::from_millis(40));
+
+        let dest_b = library::suggested_trim_path(&source);
+        let part_b = match library::trim_stream_copy(&source, &dest_b, at, duration) {
+            Ok(b) => b,
+            Err(e) => {
+                // A failed split must not leave stray files — remove the
+                // already-written part A and any partial part B so the library
+                // stays consistent.
+                let _ = std::fs::remove_file(PathBuf::from(&part_a.path));
+                let _ = std::fs::remove_file(&dest_b);
+                return Err(e.to_string());
+            }
+        };
+
+        Ok(SplitResult { part_a, part_b })
+    })
+    .await
+    .map_err(|e| format!("split task panicked: {e}"))?
+}
+
 /// Lossless key-frame accurate cut. No re-encode, so a 60 s clip trims in
 /// roughly the time it takes to copy the bytes.
 #[tauri::command]

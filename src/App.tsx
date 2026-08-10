@@ -28,6 +28,15 @@ import { cn } from "./utils/cn";
 
 const APP_VERSION = "1.2.0";
 
+/**
+ * How long the privacy-gate state must stay put before it actually flips the
+ * engine. A quick alt-tab (or a one-off foreground-detection blip) never wipes
+ * the ring buffer, re-forces an encoder key frame or spams toasts; the ring
+ * clear on gate-on still drops any stray desktop frames, so the guarantee
+ * holds.
+ */
+const PRIVACY_HYSTERESIS_MS = 5000;
+
 /** The dedicated HUD window loads the same bundle with ?hud=1. */
 const IS_HUD =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hud");
@@ -122,6 +131,8 @@ export default function App() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const lastPrivacyGate = useRef<boolean | null>(null);
+  const lastPrivacyDesired = useRef<boolean | null>(null);
+  const privacyChangedAt = useRef(0);
   const activeProfileIdRef = useRef(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
 
@@ -514,21 +525,37 @@ export default function App() {
       // Runs AFTER the auto-save check so the last 30 s of a closed game are
       // still flushed before the gate drops the history.
       if (settingsRef.current.privacyPauseWhenUnfocused) {
-        const gated =
+        // The desired state flips instantly, but the engine only sees it after
+        // PRIVACY_HYSTERESIS_MS of stability — a quick alt-tab or a transient
+        // detection blip never wipes the ring or spams toasts.
+        const desired =
           !!game && (exe.startsWith("clipflow") || exe.startsWith("explorer"));
-        if (gated !== lastPrivacyGate.current) {
-          lastPrivacyGate.current = gated;
-          await clipflow.setPrivacyGate(gated);
-          pushToast(
-            "info",
-            gated ? "Privacy mode paused" : "Privacy mode active",
-            gated
-              ? "No game is focused — nothing is being recorded right now."
-              : "Gameplay capture resumed.",
-          );
+        if (desired !== lastPrivacyDesired.current) {
+          lastPrivacyDesired.current = desired;
+          privacyChangedAt.current = Date.now();
         }
-      } else if (lastPrivacyGate.current !== null) {
+        const stable = Date.now() - privacyChangedAt.current >= PRIVACY_HYSTERESIS_MS;
+        if (stable && desired !== lastPrivacyGate.current) {
+          try {
+            await clipflow.setPrivacyGate(desired);
+            lastPrivacyGate.current = desired;
+            pushToast(
+              "info",
+              desired ? "Privacy mode paused" : "Privacy mode active",
+              desired
+                ? "No game is focused — nothing is being recorded right now."
+                : "Gameplay capture resumed.",
+            );
+          } catch {
+            // Invoke failed — keep the previous gate; the next tick retries.
+          }
+        }
+      } else if (
+        lastPrivacyGate.current !== null ||
+        lastPrivacyDesired.current !== null
+      ) {
         lastPrivacyGate.current = null;
+        lastPrivacyDesired.current = null;
         await clipflow.setPrivacyGate(false);
       }
 
@@ -781,12 +808,12 @@ export default function App() {
       if (!activeClip) return;
       setBusy(true);
       try {
-        const clip = activeClip;
-        const duration = Math.max(clip.duration_seconds, 0.1);
-        const safe = Math.min(Math.max(splitSeconds, 0.2), duration - 0.2);
-        const a = await clipflow.trimClip(clip.path, 0, safe, false);
-        const b = await clipflow.trimClip(clip.path, safe, duration, false);
-        pushToast("ok", "Clip split into 2", `${a.file_name} · ${b.file_name}`);
+        const r = await clipflow.splitClip(activeClip.path, splitSeconds);
+        pushToast(
+          "ok",
+          "Clip split into 2",
+          `${r.partA.file_name} · ${r.partB.file_name}`,
+        );
         setActiveClip(null);
         await refreshClips();
       } catch (e) {

@@ -87,6 +87,12 @@ export interface TrimResult {
   snapped_start_seconds: number;
 }
 
+/** Result of splitting a clip in two at the playhead. */
+export interface SplitResult {
+  partA: TrimResult;
+  partB: TrimResult;
+}
+
 export interface ClipSavedPayload {
   clip: ClipMetadata;
   flushMs: number;

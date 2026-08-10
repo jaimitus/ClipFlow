@@ -17,6 +17,7 @@ import type {
   ForegroundGame,
   MonitorInfo,
   ProfileMapEntry,
+  SplitResult,
   TrimResult,
 } from "./types";
 
@@ -235,6 +236,34 @@ export const clipflow = {
   async getClips(withThumbnails = true): Promise<ClipMetadata[]> {
     if (isTauri()) return invoke<ClipMetadata[]>("get_recorded_clips", { withThumbnails });
     return simEngine.list();
+  },
+
+  /** Splits a clip in two at `atSeconds` (two stream-copy trims, one task). */
+  async splitClip(sourcePath: string, atSeconds: number): Promise<SplitResult> {
+    if (isTauri()) {
+      return invoke<SplitResult>("split_clip", { sourcePath, atSeconds });
+    }
+    // Browser sim: two in-memory trims, mirroring the native result shape.
+    const a = simEngine.trim(sourcePath, 0, atSeconds);
+    const b = simEngine.trim(sourcePath, atSeconds, simEngine.find(sourcePath)?.duration_seconds ?? atSeconds + 1);
+    return {
+      partA: {
+        path: a.path,
+        file_name: a.file_name,
+        duration_seconds: a.duration_seconds,
+        size_bytes: a.size_bytes,
+        elapsed_ms: 0,
+        snapped_start_seconds: 0,
+      },
+      partB: {
+        path: b.path,
+        file_name: b.file_name,
+        duration_seconds: b.duration_seconds,
+        size_bytes: b.size_bytes,
+        elapsed_ms: 0,
+        snapped_start_seconds: atSeconds,
+      },
+    };
   },
 
   async trimClip(

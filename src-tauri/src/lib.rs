@@ -188,6 +188,7 @@ pub fn run() {
             commands::get_recorded_clips,
             commands::get_clip_thumbnail,
             commands::trim_clip,
+            commands::split_clip,
             commands::delete_clip,
             commands::delete_all_clips,
             commands::rename_clip,
