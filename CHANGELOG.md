@@ -2,6 +2,24 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-10
+
+### Added
+
+- **🛡️ Privacy mode** — with *Privacy mode* on, capture pauses whenever **no game has focus**: the ring buffer is cleared and the engine stops feeding the encoder, so clips can only ever contain gameplay. The gate turns on at startup, when the setting changes, and live via the foreground poll; the deck shows 🔒 *PRIVACY PAUSED* while active. Saving (hotkey / UI / tray) while paused shows a clear explanation instead of a bare "empty buffer".
+- **🎚️ Game/mic mix balance** — two new sliders (*Game audio %* / *Microphone %*, 0–100) in Settings → Capture Engine, applied per-source in the audio mixer **live, without an engine restart**. The default is byte-identical to the old fixed −3 dB mix.
+- **⭐ Favourites + manual tags** — star any clip from its card or the trimmer (gold ★ badge), and add custom tags (`#clutch`, `#fails`…) in the trimmer. New ★ FAVS filter and clickable tag chips in the library. All metadata lives in a private local sidecar (`clip_meta.json` in AppData) — no cloud, no telemetry.
+
+### Fixed
+
+- **Privacy mode could block Alt+C mid-match** — games running elevated or behind anti-cheat deny `OpenProcess` from a non-admin ClipFlow, so the game was "not detected" and privacy stayed paused (empty ring + blocked saves). Foreground detection now resolves the exe through a **process snapshot** (`CreateToolhelp32Snapshot`) that needs no handle to the target, and the gate flipped to an **optimistic default**: pause only when the foreground is positively ClipFlow or the desktop — a failed query keeps recording so Alt+C never breaks.
+- **Split at playhead was flaky** — two back-to-back Media Foundation trim sessions raced startup/shutdown and failed in bursts. Splitting now runs as **one native task** (probe duration, two sequential stream-copy trims with a beat between sessions); a failed split cleans up both half-files so no stray `.mp4` lingers.
+- **App sluggish with privacy on** — the 2 s foreground poll could flap the gate and wipe the ring buffer repeatedly. The gate now has a **5 s hysteresis window**: a quick alt-tab or detection blip never pauses, clears or spams toasts; turning privacy off un-gates immediately.
+
+### Tests
+
+- First unit-test suite: **8 Rust tests** (`cargo test`) for the split policy (`split_at_seconds`) and collision-free trim naming (`suggested_trim_path`), plus **12 frontend tests** (`npm test`, new vitest setup) for the privacy-gate hysteresis state machine and the optimistic foreground default.
+
 ## [1.2.0] - 2026-08-09
 
 ### Added

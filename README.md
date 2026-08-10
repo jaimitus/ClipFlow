@@ -25,14 +25,13 @@
 
 Designed for gamers and creators who demand maximum FPS and instant clipping without background resource hogging, ClipFlow continuously records your active display into a rolling memory buffer directly on your GPU. Pressing `Alt + C` instantly flushes your buffer to an MP4 video file in **under 50 milliseconds**.
 
-> ### 🆕 What's new in **1.2.0**
-> - 🏷️ **Game-tagged clips** — every save is tagged with the game in focus; filter the gallery by game and see per-game stats.
-> - 📁 **Per-game folders** — clips land in `Videos/ClipFlow/<game>/`; the library, stats and cleanup work across the whole tree.
-> - 📊 **STATS tab** — totals, this-week counters and a per-game breakdown with bars.
-> - 🖥️ **REC HUD overlay** — an always-on-top, click-through indicator while the buffer is armed.
-> - ✂️ **Split at playhead** in the trimmer + 💾 **auto-save on game exit** (last 30 s when a game closes).
-> - 🔧 **Two reliability fixes:** audio capture now **retries when a game holds the device in exclusive mode** (no more silent clips) and **Alt+C never steals focus from games** — saving mid-match no longer minimises or pauses them (confirmed with a native toast instead).
-> - Everything from 1.1.3, 1.1.2 & 1.1.0: three-tab nav, per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC and more.
+> ### 🆕 What's new in **1.3.0**
+> - 🛡️ **Privacy mode** — capture pauses whenever no game has focus (ring cleared, 🔒 *PRIVACY PAUSED* on the deck): clips can only ever contain gameplay.
+> - 🎚️ **Game/mic mix balance** — two sliders (Game audio % / Microphone %) applied live in the mixer, no engine restart.
+> - ⭐ **Favourites + tags** — star clips (★ FAVS filter) and tag them (`#clutch`) from the trimmer; all metadata stays in a private local sidecar.
+> - 🔧 **Reliability:** privacy mode now detects elevated/anti-cheat games (process-snapshot lookup, optimistic default — Alt+C never blocks mid-match), **split at playhead** runs as one robust native task, and a 5 s gate hysteresis stops the app from stuttering on alt-tabs.
+> - 🧪 **First unit tests** — 8 Rust + 12 frontend tests covering the split policy and the privacy-gate state machine.
+> - Everything from 1.2.0: game-tagged clips & per-game folders, STATS tab, REC HUD, auto-save on game exit, per-game profiles + auto-switch, signed auto-updates, custom hotkeys, HEVC and more.
 >
 > Full list in [CHANGELOG.md](CHANGELOG.md).
 
@@ -79,9 +78,9 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 
 ### 1. Download & Run
 Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.2.0_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.2.0_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.2.0_x64_en-US.msi` (Windows Installer)
+- **Standalone Portable:** `ClipFlow_v1.3.0_Portable.exe` (Single executable, no installation needed)
+- **Setup Installer:** `ClipFlow_1.3.0_x64-setup.exe` (NSIS Installer)
+- **MSI Package:** `ClipFlow_1.3.0_x64_en-US.msi` (Windows Installer)
 
 > 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 
