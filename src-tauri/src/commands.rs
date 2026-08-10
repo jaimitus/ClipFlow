@@ -339,6 +339,17 @@ pub async fn get_clip_thumbnail(path: String, at_seconds: Option<f32>) -> Result
     .map_err(|e| format!("thumbnail task panicked: {e}"))?
 }
 
+/// Pure split-point policy, shared with the unit tests: validates the clip is
+/// long enough to be split in two and clamps the requested playhead so both
+/// halves are at least 200 ms long (stream copy can only cut on key frames,
+/// so the clamp also gives the encoder room to snap to a real cut point).
+fn split_at_seconds(duration_seconds: f32, at_seconds: f32) -> Result<f32, String> {
+    if duration_seconds <= 0.4 {
+        return Err("clip is too short to split".to_string());
+    }
+    Ok(at_seconds.clamp(0.2, duration_seconds - 0.2))
+}
+
 /// Splits a clip in two at `at_seconds` with two stream-copy trims.
 ///
 /// Both halves run inside ONE blocking task so the Media Foundation sessions
@@ -362,10 +373,7 @@ pub async fn split_clip(source_path: String, at_seconds: f32) -> Result<SplitRes
         // Use the probed duration so both halves stay inside the media even if
         // the gallery's cached duration is stale.
         let duration = library::probe(&source).map_err(|e| e.to_string())?.duration_seconds;
-        if duration <= 0.4 {
-            return Err("clip is too short to split".to_string());
-        }
-        let at = at_seconds.clamp(0.2, duration - 0.2);
+        let at = split_at_seconds(duration, at_seconds)?;
 
         let part_a = library::trim_stream_copy(
             &source,
@@ -1154,4 +1162,49 @@ mod clipboard {
 #[tauri::command]
 pub fn simulate_device_loss(state: State<'_, AppState>) {
     state.engine.simulate_device_loss();
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::split_at_seconds;
+
+    #[test]
+    fn rejects_clips_too_short_to_split() {
+        // 0.4 s is the minimum *total* length: it cannot produce two real
+        // halves, and everything shorter is rejected too.
+        assert!(split_at_seconds(0.4, 0.2).is_err());
+        assert!(split_at_seconds(0.3, 0.1).is_err());
+        assert!(split_at_seconds(0.0, 0.0).is_err());
+    }
+
+    #[test]
+    fn passes_through_playheads_inside_the_media() {
+        assert_eq!(split_at_seconds(10.0, 5.0).unwrap(), 5.0);
+        assert_eq!(split_at_seconds(60.0, 30.0).unwrap(), 30.0);
+        assert_eq!(split_at_seconds(10.0, 3.14159).unwrap(), 3.14159);
+    }
+
+    #[test]
+    fn clamps_playhead_to_a_minimum_half_length() {
+        // At the very start -> pushed to 0.2 s so part A is non-empty.
+        assert_eq!(split_at_seconds(10.0, 0.0).unwrap(), 0.2);
+        assert_eq!(split_at_seconds(10.0, -5.0).unwrap(), 0.2);
+        // At/after the end -> pushed to duration - 0.2 s so part B is non-empty.
+        assert_eq!(split_at_seconds(10.0, 9.9).unwrap(), 9.8);
+        assert_eq!(split_at_seconds(10.0, 999.0).unwrap(), 9.8);
+    }
+
+    #[test]
+    fn clamp_keeps_both_halves_inside_the_media() {
+        // Whatever the playhead, both halves must be within [0, duration].
+        for at in [-100.0, -0.1, 0.0, 0.2, 1.0, 5.0, 9.8, 10.0, 100.0] {
+            let cut = split_at_seconds(10.0, at).unwrap();
+            assert!(cut >= 0.2, "cut {cut} below 0.2");
+            assert!(cut <= 9.8, "cut {cut} above duration - 0.2");
+        }
+    }
 }

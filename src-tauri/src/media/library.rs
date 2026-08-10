@@ -643,3 +643,77 @@ pub fn trim_stream_copy(
         snapped_start_seconds: snapped,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::suggested_trim_path;
+
+    /// Unique temp dir per test process so parallel runs never collide.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "clipflow-lib-test-{}-{tag}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn suggests_basename_trim_mp4_when_free() {
+        let dir = temp_dir("free");
+        let src = dir.join("clutch.mp4");
+        std::fs::write(&src, b"x").unwrap();
+        let got = suggested_trim_path(&src);
+        assert_eq!(got, dir.join("clutch_trim.mp4"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn never_reuses_an_existing_trim_file() {
+        let dir = temp_dir("collision");
+        let src = dir.join("clutch.mp4");
+        std::fs::write(&src, b"x").unwrap();
+
+        // Simulate an existing trim from a previous edit.
+        std::fs::write(dir.join("clutch_trim.mp4"), b"x").unwrap();
+        assert_eq!(
+            suggested_trim_path(&src),
+            dir.join("clutch_trim2.mp4")
+        );
+
+        // Both slots taken -> keeps bumping.
+        std::fs::write(dir.join("clutch_trim2.mp4"), b"x").unwrap();
+        assert_eq!(
+            suggested_trim_path(&src),
+            dir.join("clutch_trim3.mp4")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn split_halves_get_distinct_names() {
+        // The split flow calls suggested_trim_path twice back-to-back; the
+        // first result existing on disk must force the second to differ, so
+        // part A can never overwrite part B.
+        let dir = temp_dir("split");
+        let src = dir.join("match.mp4");
+        std::fs::write(&src, b"x").unwrap();
+
+        let part_a = suggested_trim_path(&src);
+        std::fs::write(&part_a, b"x").unwrap(); // part A lands on disk
+        let part_b = suggested_trim_path(&src);
+        assert_ne!(part_a, part_b);
+        assert_eq!(part_a, dir.join("match_trim.mp4"));
+        assert_eq!(part_b, dir.join("match_trim2.mp4"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn handles_sources_without_parent_or_stem() {
+        // A bare relative file name still gets a sane sibling path.
+        let got = suggested_trim_path(Path::new("bare.mp4"));
+        assert_eq!(got, PathBuf::from("bare_trim.mp4"));
+    }
+}

@@ -12,6 +12,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { DEFAULT_SETTINGS, clipflow } from "./lib/bridge";
 import { formatBytes, formatDuration } from "./lib/format";
+import { PrivacyGateHysteresis, shouldGateForForeground } from "./lib/privacyGate";
 import { playSaveSound } from "./lib/sound";
 import type {
   AppSettings,
@@ -130,9 +131,13 @@ export default function App() {
   const toastId = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const lastPrivacyGate = useRef<boolean | null>(null);
-  const lastPrivacyDesired = useRef<boolean | null>(null);
-  const privacyChangedAt = useRef(0);
+  // Privacy-gate hysteresis lives in a pure, unit-tested state machine
+  // (src/lib/privacyGate.ts): the desired gate flips instantly, but the engine
+  // only learns about it after PRIVACY_HYSTERESIS_MS of stability.
+  const privacyHysteresis = useRef<PrivacyGateHysteresis | null>(null);
+  if (privacyHysteresis.current === null) {
+    privacyHysteresis.current = new PrivacyGateHysteresis(PRIVACY_HYSTERESIS_MS);
+  }
   const activeProfileIdRef = useRef(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
 
@@ -528,21 +533,16 @@ export default function App() {
         // The desired state flips instantly, but the engine only sees it after
         // PRIVACY_HYSTERESIS_MS of stability — a quick alt-tab or a transient
         // detection blip never wipes the ring or spams toasts.
-        const desired =
-          !!game && (exe.startsWith("clipflow") || exe.startsWith("explorer"));
-        if (desired !== lastPrivacyDesired.current) {
-          lastPrivacyDesired.current = desired;
-          privacyChangedAt.current = Date.now();
-        }
-        const stable = Date.now() - privacyChangedAt.current >= PRIVACY_HYSTERESIS_MS;
-        if (stable && desired !== lastPrivacyGate.current) {
+        const desired = shouldGateForForeground(exe);
+        const gate = privacyHysteresis.current!.tick(true, desired);
+        if (gate !== null) {
           try {
-            await clipflow.setPrivacyGate(desired);
-            lastPrivacyGate.current = desired;
+            await clipflow.setPrivacyGate(gate);
+            privacyHysteresis.current!.commit(gate);
             pushToast(
               "info",
-              desired ? "Privacy mode paused" : "Privacy mode active",
-              desired
+              gate ? "Privacy mode paused" : "Privacy mode active",
+              gate
                 ? "No game is focused — nothing is being recorded right now."
                 : "Gameplay capture resumed.",
             );
@@ -550,13 +550,13 @@ export default function App() {
             // Invoke failed — keep the previous gate; the next tick retries.
           }
         }
-      } else if (
-        lastPrivacyGate.current !== null ||
-        lastPrivacyDesired.current !== null
-      ) {
-        lastPrivacyGate.current = null;
-        lastPrivacyDesired.current = null;
-        await clipflow.setPrivacyGate(false);
+      } else {
+        // Privacy off: un-gate immediately (the machine returns `false` once
+        // if a gate was ever armed, then settles to `null`).
+        const gate = privacyHysteresis.current!.tick(false, false);
+        if (gate !== null) {
+          await clipflow.setPrivacyGate(false);
+        }
       }
 
       if (!settingsRef.current.autoSwitchProfiles || !exe) return;
