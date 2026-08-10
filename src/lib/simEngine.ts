@@ -68,6 +68,8 @@ export class SimEngine {
   private lastError: string | null = null;
   private deviceResets = 0;
   private droppedFrames = 0;
+  /** Mirrors the native privacy gate: no game focused → buffer is empty. */
+  privacyGated = false;
 
   bufferSeconds = 60;
   targetFps = FPS;
@@ -352,6 +354,7 @@ export class SimEngine {
       audio_mic: false,
       audio_drift_ms: this.running ? (Math.sin(performance.now() / 4200) * 1.4) : 0,
       audio_error: null,
+      privacy_active: this.privacyGated,
       uptime_seconds: this.running ? (performance.now() - this.startedAt) / 1000 : 0,
       last_error: this.lastError,
     };
@@ -362,12 +365,51 @@ export class SimEngine {
     return () => this.statsListeners.delete(listener);
   }
 
+  /** Privacy mode: drop the ring history and stop saving while gated. */
+  setPrivacyGate(gate: boolean) {
+    this.privacyGated = gate;
+    if (gate) {
+      this.legs.forEach((leg) => {
+        try {
+          leg.recorder.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+      this.legs = [];
+    } else {
+      // Fresh start on resume, like the native engine restarting the GOP.
+      this.spawnLeg();
+    }
+  }
+
+  /** Stars / unstars an in-memory clip (browser demo of the sidecar store). */
+  setFavorite(path: string, favorite: boolean) {
+    const clip = this.find(path);
+    if (clip) clip.favorite = favorite;
+  }
+
+  /** Replaces the tags of an in-memory clip (browser demo of the sidecar). */
+  setTags(path: string, tags: string[]) {
+    const clip = this.find(path);
+    if (!clip) return;
+    const seen = new Set<string>();
+    clip.tags = tags
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && !seen.has(t) && !!seen.add(t))
+      .slice(0, 12);
+  }
+
   /** Flush: assemble the oldest leg into a playable blob. */
   async save(
     maxSeconds?: number,
     gameOverride?: string,
   ): Promise<{ clip: ClipMetadata; flushMs: number }> {
     if (!this.running) throw new Error("Buffer is not armed — press ARM BUFFER first.");
+    if (this.privacyGated)
+      throw new Error(
+        "Privacy mode: nothing recorded — no game is focused. Focus a game to arm the buffer again.",
+      );
     const t0 = performance.now();
     const leg = this.legs[0];
 
@@ -423,6 +465,8 @@ export class SimEngine {
       has_audio: true,
       game,
       thumbnail: this.canvas ? this.canvas.toDataURL("image/jpeg", 0.62) : null,
+      favorite: false,
+      tags: [],
       preview_url: url,
     };
 

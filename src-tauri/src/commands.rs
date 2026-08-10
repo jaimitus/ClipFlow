@@ -4,10 +4,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::clipmeta::{ClipMetaEntry, ClipMetaStore};
 use crate::foreground::ForegroundGame;
 use crate::media::library::{self, ClipMetadata, TrimResult};
 use crate::media::recorder::{
@@ -22,6 +23,8 @@ use crate::settings::{CaptureProfile, ProfileMapEntry, Settings};
 pub struct AppState {
     pub engine: Arc<CaptureEngine>,
     pub settings: RwLock<Settings>,
+    /// Favourites + custom tags, persisted to `clip_meta.json` in AppData.
+    pub clip_meta: Mutex<ClipMetaStore>,
     /// Guards against two Alt+C flushes racing each other.
     pub flush_lock: Arc<parking_lot::Mutex<()>>,
 }
@@ -34,6 +37,7 @@ impl AppState {
         Self {
             engine: Arc::new(CaptureEngine::new()),
             settings: RwLock::new(settings),
+            clip_meta: Mutex::new(ClipMetaStore::load()),
             flush_lock: Arc::new(parking_lot::Mutex::new(())),
         }
     }
@@ -185,6 +189,31 @@ pub fn resolve_game_folder(state: &AppState, game_override: Option<&str>) -> Opt
     crate::foreground::get_foreground_game().and_then(|g| game_folder_name(&g.exe))
 }
 
+/// When privacy mode is on and no game currently owns the foreground, saving
+/// would flush desktop footage (or an empty buffer). Returns the message to
+/// surface to the user, or `None` when saving is fine.
+pub fn privacy_blocked_message(state: &AppState, game_override: Option<&str>) -> Option<String> {
+    let s = state.settings.read();
+    if !s.privacy_pause_when_unfocused {
+        return None;
+    }
+    if game_override.is_some() {
+        return None; // auto-save tags a game that just lost focus: gameplay
+    }
+    match crate::foreground::get_foreground_game() {
+        // "A game" = any foreground app that is not our own deck or the
+        // desktop — the same loose heuristic the deck's privacy gate uses.
+        Some(g) if {
+            let e = g.exe.to_ascii_lowercase();
+            !e.starts_with("clipflow") && !e.starts_with("explorer")
+        } => None,
+        _ => Some(
+            "Privacy mode: nothing recorded — no game is focused. Focus a game to arm the buffer again."
+                .to_string(),
+        ),
+    }
+}
+
 /// Flushes the ring buffer to a finalised `.mp4`, then returns its metadata.
 /// `max_seconds` lets the UI (or the tray menu) ask for "last 30 s" out of a
 /// 120 s buffer without re-configuring the engine. `game_override` is used by
@@ -198,6 +227,11 @@ pub async fn save_instant_replay(
     triggered_by: Option<String>,
     game_override: Option<String>,
 ) -> Result<ClipMetadata, String> {
+    // Privacy mode: never save desktop content. If no game has focus, the ring
+    // is empty anyway — fail with a message instead of a bare "empty buffer".
+    if let Some(msg) = privacy_blocked_message(&state, game_override.as_deref()) {
+        return Err(msg);
+    }
     // Per-game organisation: route the flush into output_dir/<game>/. The
     // subfolder is recomputed on every save so it can never go stale.
     let game_folder = resolve_game_folder(&state, game_override.as_deref());
@@ -233,6 +267,8 @@ pub async fn save_instant_replay(
         has_audio: result.has_audio,
         game: game_folder.clone(),
         thumbnail,
+        favorite: false,
+        tags: Vec::new(),
     };
 
     // Auto-saves must never interrupt the user; only explicit UI saves open
@@ -273,11 +309,14 @@ pub async fn get_recorded_clips(
 ) -> Result<Vec<ClipMetadata>, String> {
     let dir = state.output_dir();
     let thumbs = with_thumbnails.unwrap_or(true);
-    tauri::async_runtime::spawn_blocking(move || {
+    let mut clips = tauri::async_runtime::spawn_blocking(move || {
         library::scan_directory(&dir, thumbs).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("scan task panicked: {e}"))?
+    .map_err(|e| format!("scan task panicked: {e}"))??;
+    // Fold in favourites + tags from the sidecar and prune deleted entries.
+    state.clip_meta.lock().merge_into(&mut clips);
+    Ok(clips)
 }
 
 #[tauri::command]
@@ -346,7 +385,11 @@ pub fn delete_all_clips(state: State<'_, AppState>) -> Result<u32, String> {
 }
 
 #[tauri::command]
-pub fn rename_clip(path: String, new_name: String) -> Result<String, String> {
+pub fn rename_clip(
+    state: State<'_, AppState>,
+    path: String,
+    new_name: String,
+) -> Result<String, String> {
     let src = PathBuf::from(&path);
     let sanitized: String = new_name
         .chars()
@@ -362,6 +405,12 @@ pub fn rename_clip(path: String, new_name: String) -> Result<String, String> {
         .ok_or_else(|| "clip has no parent directory".to_string())?
         .join(name);
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    // Keep favourites/tags attached to the clip across the rename: the sidecar
+    // is keyed by path, so the entry moves to the new path.
+    state
+        .clip_meta
+        .lock()
+        .migrate(&src.to_string_lossy(), &dest.to_string_lossy());
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -523,6 +572,9 @@ pub struct SettingsPatch {
     pub organize_by_game: Option<bool>,
     pub autosave_on_game_exit: Option<bool>,
     pub hud_enabled: Option<bool>,
+    pub privacy_pause_when_unfocused: Option<bool>,
+    pub game_volume: Option<u32>,
+    pub mic_volume: Option<u32>,
 }
 
 #[tauri::command]
@@ -644,6 +696,32 @@ pub fn update_settings(
             }
         }
     }
+    if let Some(v) = patch.privacy_pause_when_unfocused {
+        s.privacy_pause_when_unfocused = v;
+        // If privacy just turned on while no game is focused, gate the engine
+        // immediately instead of waiting for the next 2 s foreground poll.
+        // Turning it off un-gates right away too.
+        if v {
+            let gate = match crate::foreground::get_foreground_game() {
+                Some(g) if {
+                    let e = g.exe.to_ascii_lowercase();
+                    !e.starts_with("clipflow") && !e.starts_with("explorer")
+                } => false,
+                _ => true,
+            };
+            state.engine.set_privacy_gate(gate);
+        } else {
+            state.engine.set_privacy_gate(false);
+        }
+    }
+    if let Some(v) = patch.game_volume {
+        s.game_volume = v.clamp(0, 100);
+        state.engine.set_audio_volumes(s.game_volume, s.mic_volume);
+    }
+    if let Some(v) = patch.mic_volume {
+        s.mic_volume = v.clamp(0, 100);
+        state.engine.set_audio_volumes(s.game_volume, s.mic_volume);
+    }
     s.save()?;
     Ok(s.clone())
 }
@@ -673,6 +751,44 @@ pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let _ = hud.set_ignore_cursor_events(true);
     let _ = hud.set_always_on_top(true);
     let _ = hud.show();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Clip metadata (favourites + tags)
+// ---------------------------------------------------------------------------
+
+/// Stars / unstars a clip (persisted in the sidecar store).
+#[tauri::command]
+pub fn set_clip_favorite(
+    state: State<'_, AppState>,
+    path: String,
+    favorite: bool,
+) -> Result<ClipMetaEntry, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("clip not found: {path}"));
+    }
+    state.clip_meta.lock().set_favorite(&path, favorite)
+}
+
+/// Replaces the custom tags of a clip (persisted in the sidecar store).
+#[tauri::command]
+pub fn set_clip_tags(
+    state: State<'_, AppState>,
+    path: String,
+    tags: Vec<String>,
+) -> Result<ClipMetaEntry, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("clip not found: {path}"));
+    }
+    state.clip_meta.lock().set_tags(&path, tags)
+}
+
+/// Privacy mode: tells the engine whether a game is currently focused. When
+/// gated, the ring is cleared and capture stops feeding the encoder.
+#[tauri::command]
+pub fn set_privacy_gate(state: State<'_, AppState>, gate: bool) -> Result<(), String> {
+    state.engine.set_privacy_gate(gate);
     Ok(())
 }
 

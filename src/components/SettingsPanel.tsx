@@ -243,10 +243,34 @@ export default function SettingsPanel({
           />
         </Row>
 
-        <Row label="Microphone" hint="Mixed at −3 dB into the loopback stream.">
+        <Row label="Microphone" hint="Adds your voice to the mix.">
           <Toggle
             on={settings.captureMicrophone}
             onClick={() => onChange({ captureMicrophone: !settings.captureMicrophone })}
+          />
+        </Row>
+
+        <Row label={`Game audio — ${settings.gameVolume}%`} hint="System/loopback volume in the mix. Applies live, no restart.">
+          <input
+            type="range"
+            className="cf-range w-48"
+            min={0}
+            max={100}
+            step={5}
+            value={settings.gameVolume}
+            onChange={(e) => onChange({ gameVolume: Number(e.target.value) })}
+          />
+        </Row>
+
+        <Row label={`Microphone — ${settings.micVolume}%`} hint="Your voice volume in the mix. Applies live, no restart.">
+          <input
+            type="range"
+            className="cf-range w-48"
+            min={0}
+            max={100}
+            step={5}
+            value={settings.micVolume}
+            onChange={(e) => onChange({ micVolume: Number(e.target.value) })}
           />
         </Row>
 
@@ -340,6 +364,13 @@ export default function SettingsPanel({
           <Toggle
             on={settings.hudEnabled}
             onClick={() => onChange({ hudEnabled: !settings.hudEnabled })}
+          />
+        </Row>
+
+        <Row label="Privacy mode" hint="Only record while a game has focus. When you alt-tab to the desktop (or any app), the buffer pauses and clears — clips can never contain non-gameplay content.">
+          <Toggle
+            on={settings.privacyPauseWhenUnfocused}
+            onClick={() => onChange({ privacyPauseWhenUnfocused: !settings.privacyPauseWhenUnfocused })}
           />
         </Row>
 

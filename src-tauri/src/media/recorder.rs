@@ -137,6 +137,10 @@ pub struct RecorderConfig {
     pub monitor_index: u32,
     pub capture_system_audio: bool,
     pub capture_microphone: bool,
+    /// Mix balance for the *system* audio source, 0-100 (100 = unity gain).
+    pub game_volume: u32,
+    /// Mix balance for the microphone source, 0-100 (100 = unity gain).
+    pub mic_volume: u32,
     pub output_dir: PathBuf,
     /// Per-game subfolder the next flush lands in (None = output root).
     pub output_subfolder: Option<String>,
@@ -154,6 +158,8 @@ impl Default for RecorderConfig {
             monitor_index: 0,
             capture_system_audio: true,
             capture_microphone: false,
+            game_volume: 100,
+            mic_volume: 100,
             output_dir: default_output_dir(),
             output_subfolder: None,
         }
@@ -195,6 +201,9 @@ pub struct EngineStats {
     /// (e.g. the render device is held in exclusive mode by a game). Null when
     /// audio is healthy or disabled. The UI surfaces this on the deck.
     pub audio_error: Option<String>,
+    /// Privacy mode: a game is *not* in the foreground, so the engine is
+    /// dropping frames and no gameplay is accumulating in the ring buffer.
+    pub privacy_active: bool,
     pub uptime_seconds: u64,
     pub last_error: Option<String>,
 }
@@ -437,6 +446,10 @@ struct SharedState {
     running: AtomicBool,
     stop_requested: AtomicBool,
     pub(super) force_device_reset: AtomicBool,
+    /// Set by the frontend when privacy mode is on and no game has focus: the
+    /// capture thread stops feeding the encoder, so the ring can never hold
+    /// desktop footage.
+    privacy_gate: AtomicBool,
     generation: Arc<AtomicU32>,
     dropped_frames: AtomicU64,
     device_resets: AtomicU32,
@@ -460,6 +473,7 @@ impl SharedState {
             running: AtomicBool::new(false),
             stop_requested: AtomicBool::new(false),
             force_device_reset: AtomicBool::new(false),
+            privacy_gate: AtomicBool::new(false),
             generation: Arc::new(AtomicU32::new(1)),
             dropped_frames: AtomicU64::new(0),
             device_resets: AtomicU32::new(0),
@@ -520,6 +534,9 @@ pub struct CaptureEngine {
     audio: Mutex<Option<crate::media::audio::AudioCapture>>,
     /// Written by the audio thread: the reason audio is unavailable, if any.
     audio_error: Arc<parking_lot::Mutex<Option<String>>>,
+    /// Live mix levels (permille, 0-1000) shared with the audio thread.
+    game_gain: Arc<AtomicU32>,
+    mic_gain: Arc<AtomicU32>,
     /// Set by the muxer thread once the first flush produced a valid header.
     video_format: Arc<Mutex<Option<VideoFormatHeader>>>,
 }
@@ -547,6 +564,8 @@ impl CaptureEngine {
             worker: Mutex::new(None),
             audio: Mutex::new(None),
             audio_error: Arc::new(parking_lot::Mutex::new(None)),
+            game_gain: Arc::new(AtomicU32::new(1000)),
+            mic_gain: Arc::new(AtomicU32::new(1000)),
             video_format: Arc::new(Mutex::new(None)),
         }
     }
@@ -589,6 +608,7 @@ impl CaptureEngine {
             audio_mic: cfg.capture_microphone,
             audio_drift_ms: *self.shared.audio_drift_ms.read(),
             audio_error: self.audio_error.lock().clone(),
+            privacy_active: self.shared.privacy_gate.load(Ordering::Acquire),
             uptime_seconds: self
                 .shared
                 .started_at
@@ -629,9 +649,21 @@ impl CaptureEngine {
             // Fresh engine → clear the previous run's audio error (the thread
             // re-populates it if it still cannot capture).
             *self.audio_error.lock() = None;
+            // Volumes are 0-100; the audio thread works in permille so a fresh
+            // engine always starts from the saved mix balance.
+            self.game_gain.store(
+                (cfg.game_volume.min(100) as u32) * 10,
+                Ordering::Release,
+            );
+            self.mic_gain.store(
+                (cfg.mic_volume.min(100) as u32) * 10,
+                Ordering::Release,
+            );
             match crate::media::audio::AudioCapture::start(
                 cfg.capture_system_audio,
                 cfg.capture_microphone,
+                Arc::clone(&self.game_gain),
+                Arc::clone(&self.mic_gain),
                 Arc::clone(&self.shared.ring),
                 Arc::clone(&self.shared.generation),
                 Arc::clone(&self.audio_error),
@@ -712,6 +744,26 @@ impl CaptureEngine {
     /// commands layer recomputes this on every save, so it can never go stale.
     pub fn set_output_subfolder(&self, sub: Option<String>) {
         self.config.write().output_subfolder = sub;
+    }
+
+    /// Privacy mode: when `gate` turns on (no game focused), the ring history
+    /// is dropped and the capture thread stops feeding the encoder, so the
+    /// buffer can never hold desktop footage. Turning it off resumes capture
+    /// from a clean slate (next frame is forced to a key frame).
+    pub fn set_privacy_gate(&self, gate: bool) {
+        // Store the gate BEFORE clearing: once the capture thread sees it, it
+        // stops feeding the encoder, so nothing can be pushed after the clear.
+        self.shared.privacy_gate.store(gate, Ordering::Release);
+        if gate {
+            self.shared.ring.lock().clear();
+        }
+    }
+
+    /// Live mix balance (0-100 each). The audio thread picks the new gains up
+    /// on its next loop — no engine restart needed.
+    pub fn set_audio_volumes(&self, game: u32, mic: u32) {
+        self.game_gain.store(game.min(100) * 10, Ordering::Release);
+        self.mic_gain.store(mic.min(100) * 10, Ordering::Release);
     }
 
     pub fn simulate_device_loss(&self) {
@@ -1902,6 +1954,7 @@ mod win {
 
             let mut next_deadline = Instant::now();
             let mut force_key = true;
+            let mut was_gated = false;
             let mut last_texture: Option<ID3D11Texture2D> = None;
             let mut fps_window = Instant::now();
             let mut fps_frames = 0u32;
@@ -1998,10 +2051,20 @@ mod win {
                 }
 
                 if let Some(tex) = texture.as_ref() {
-                    if let Err(e) = converter.convert(tex) {
+                    // Privacy mode: no game is focused, so this frame is dropped
+                    // before the encoder — the ring can never hold desktop
+                    // footage. When the gate lifts, the next frame is forced to
+                    // a key frame so the buffer restarts cleanly.
+                    if shared.privacy_gate.load(Ordering::Acquire) {
+                        was_gated = true;
+                    } else if let Err(e) = converter.convert(tex) {
                         log::warn!("[clipflow] color convert failed: {e}");
                         shared.dropped_frames.fetch_add(1, Ordering::Relaxed);
                     } else {
+                        if was_gated {
+                            force_key = true;
+                            was_gated = false;
+                        }
                         let pts = clock.now_hns();
                         let submit_ns = submit_start.elapsed().as_nanos() as u64;
                         let encode_start = Instant::now();
@@ -2133,10 +2196,23 @@ mod sim {
         let interval = Duration::from_secs_f64(1.0 / cfg.target_fps.max(1) as f64);
         let mut pts = 0i64;
         let mut n = 0u64;
+        let mut was_gated = false;
         let generation = shared.generation.load(Ordering::Acquire);
         let start = Instant::now();
 
         while !shared.stop_requested.load(Ordering::Acquire) {
+            // Privacy mode: no game focused → nothing enters the ring buffer.
+            if shared.privacy_gate.load(Ordering::Acquire) {
+                was_gated = true;
+                std::thread::sleep(interval);
+                continue;
+            }
+            // Resuming from a gate: restart the GOP cadence so the buffer
+            // begins on a key frame again.
+            if was_gated {
+                was_gated = false;
+                n = 0;
+            }
             let key = n % cfg.target_fps.max(1) as u64 == 0;
             let size = if key { bytes_per_frame * 6 } else { bytes_per_frame };
             let pkt = EncodedPacket {

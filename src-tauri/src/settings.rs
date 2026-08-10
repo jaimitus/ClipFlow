@@ -78,6 +78,21 @@ pub struct Settings {
     /// Show the small always-on-top recording indicator while armed.
     #[serde(default)]
     pub hud_enabled: bool,
+    /// Privacy mode: when no game has the foreground focus, the buffer stops
+    /// accumulating (and is cleared), so clips can never contain desktop
+    /// content — only gameplay.
+    #[serde(default)]
+    pub privacy_pause_when_unfocused: bool,
+    /// System (game) audio volume in the mix, 0-100. Applies live.
+    #[serde(default = "default_100")]
+    pub game_volume: u32,
+    /// Microphone volume in the mix, 0-100. Applies live.
+    #[serde(default = "default_100")]
+    pub mic_volume: u32,
+}
+
+fn default_100() -> u32 {
+    100
 }
 
 fn default_true() -> bool {
@@ -110,6 +125,9 @@ impl Default for Settings {
             organize_by_game: true,
             autosave_on_game_exit: false,
             hud_enabled: false,
+            privacy_pause_when_unfocused: false,
+            game_volume: 100,
+            mic_volume: 100,
         }
     }
 }
@@ -203,6 +221,8 @@ impl Settings {
             monitor_index: self.monitor_index,
             capture_system_audio: self.capture_system_audio,
             capture_microphone: self.capture_microphone,
+            game_volume: self.game_volume.clamp(0, 100),
+            mic_volume: self.mic_volume.clamp(0, 100),
             output_dir: PathBuf::from(&self.output_dir),
             output_subfolder: None,
         }

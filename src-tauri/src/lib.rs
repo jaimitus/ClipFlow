@@ -3,6 +3,7 @@
 //! Tauri v2 application setup: tray icon, global shortcuts, the stats
 //! heartbeat and the IPC surface.
 
+pub mod clipmeta;
 pub mod commands;
 pub mod foreground;
 pub mod hotkeys;
@@ -109,6 +110,17 @@ pub fn run() {
                 }
             }
 
+            // Privacy mode starts gated: if no game is focused at launch, the
+            // ring must never accumulate desktop footage before the UI's first
+            // 2 s foreground poll has a chance to run.
+            if handle.state::<AppState>().settings.read().privacy_pause_when_unfocused {
+                let gate = match crate::foreground::get_foreground_game() {
+                    Some(g) if !g.exe.to_ascii_lowercase().starts_with("clipflow") => false,
+                    _ => true,
+                };
+                handle.state::<AppState>().engine.set_privacy_gate(gate);
+            }
+
             // Arm the buffer immediately so the very first Alt+C already has
             // history behind it.
             if autostart {
@@ -198,6 +210,9 @@ pub fn run() {
             commands::set_profile_map,
             commands::apply_profile,
             commands::cleanup_old_clips,
+            commands::set_clip_favorite,
+            commands::set_clip_tags,
+            commands::set_privacy_gate,
             commands::set_hud_visible,
             commands::set_save_hotkey,
             commands::set_toggle_hotkey,
@@ -250,6 +265,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     let Some(state) = h.try_state::<AppState>() else {
                         return;
                     };
+                    // Privacy mode: the ring is empty while no game is focused.
+                    if let Some(msg) = commands::privacy_blocked_message(&state, None) {
+                        let _ = h.emit(commands::EVT_ERROR, msg);
+                        return;
+                    }
                     let engine = Arc::clone(&state.engine);
                     let _ = tauri::async_runtime::spawn_blocking(move || {
                         engine.flush_to_disk(Some(30.0))

@@ -166,6 +166,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   organizeByGame: true,
   autosaveOnGameExit: false,
   hudEnabled: false,
+  privacyPauseWhenUnfocused: false,
+  gameVolume: 100,
+  micVolume: 100,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -456,6 +459,37 @@ export const clipflow = {
     if (isTauri()) {
       await invoke("set_hud_visible", { visible });
     }
+  },
+
+  /**
+   * Privacy mode: tells the engine whether a game currently owns the focus.
+   * While gated, the ring is cleared and capture stops — the deck surface for
+   * "only record gameplay".
+   */
+  async setPrivacyGate(gate: boolean): Promise<void> {
+    if (isTauri()) {
+      await invoke("set_privacy_gate", { gate });
+      return;
+    }
+    simEngine.setPrivacyGate(gate);
+  },
+
+  /** Stars / unstars a clip; persists in the local sidecar store. */
+  async setClipFavorite(path: string, favorite: boolean): Promise<void> {
+    if (isTauri()) {
+      await invoke("set_clip_favorite", { path, favorite });
+      return;
+    }
+    simEngine.setFavorite(path, favorite);
+  },
+
+  /** Replaces the custom tags of a clip; persists in the local sidecar store. */
+  async setClipTags(path: string, tags: string[]): Promise<void> {
+    if (isTauri()) {
+      await invoke("set_clip_tags", { path, tags });
+      return;
+    }
+    simEngine.setTags(path, tags);
   },
 
   /**

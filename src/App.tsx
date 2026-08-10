@@ -59,6 +59,7 @@ const IDLE_STATS: EngineStats = {
   audio_mic: false,
   audio_drift_ms: 0,
   audio_error: null,
+  privacy_active: false,
   uptime_seconds: 0,
   last_error: null,
 };
@@ -101,6 +102,8 @@ export default function App() {
   const [gameFilter, setGameFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [audioOnly, setAudioOnly] = useState(false);
+  const [favOnly, setFavOnly] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
@@ -118,6 +121,7 @@ export default function App() {
   const toastId = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const lastPrivacyGate = useRef<boolean | null>(null);
   const activeProfileIdRef = useRef(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
 
@@ -501,6 +505,31 @@ export default function App() {
       lastFocusedExe = exe;
       focusedSince = Date.now();
 
+      // Privacy mode: as soon as no game owns the focus (our own deck or the
+      // desktop included), gate the engine so the ring is cleared and capture
+      // pauses — clips can then never contain non-gameplay content. Runs AFTER
+      // the auto-save check so the last 30 s of a closed game are still
+      // flushed before the gate drops the history. Only calls the backend when
+      // the gate state actually flips.
+      if (settingsRef.current.privacyPauseWhenUnfocused) {
+        const gated =
+          !game || exe.startsWith("clipflow") || exe.startsWith("explorer");
+        if (gated !== lastPrivacyGate.current) {
+          lastPrivacyGate.current = gated;
+          await clipflow.setPrivacyGate(gated);
+          pushToast(
+            "info",
+            gated ? "Privacy mode paused" : "Privacy mode active",
+            gated
+              ? "No game is focused — nothing is being recorded right now."
+              : "Gameplay capture resumed.",
+          );
+        }
+      } else if (lastPrivacyGate.current !== null) {
+        lastPrivacyGate.current = null;
+        await clipflow.setPrivacyGate(false);
+      }
+
       if (!settingsRef.current.autoSwitchProfiles || !exe) return;
       if (exe === lastSwitchExe) return; // focus unchanged since last poll
       lastSwitchExe = exe;
@@ -649,6 +678,43 @@ export default function App() {
     [activeClip, pushToast],
   );
 
+  const toggleFavorite = useCallback(
+    async (clip: ClipMetadata) => {
+      const next = !clip.favorite;
+      // Optimistic update: the gallery feels instant, the sidecar persists.
+      setClips((prev) =>
+        prev.map((c) => (c.path === clip.path ? { ...c, favorite: next } : c)),
+      );
+      setActiveClip((c) => (c && c.path === clip.path ? { ...c, favorite: next } : c));
+      try {
+        await clipflow.setClipFavorite(clip.path, next);
+        pushToast(
+          "ok",
+          next ? "Added to favourites" : "Removed from favourites",
+          clip.title,
+        );
+      } catch (e) {
+        pushToast("err", "Could not update favourite", String(e));
+      }
+    },
+    [pushToast],
+  );
+
+  const updateTags = useCallback(
+    async (clip: ClipMetadata, tags: string[]) => {
+      setClips((prev) =>
+        prev.map((c) => (c.path === clip.path ? { ...c, tags } : c)),
+      );
+      setActiveClip((c) => (c && c.path === clip.path ? { ...c, tags } : c));
+      try {
+        await clipflow.setClipTags(clip.path, tags);
+      } catch (e) {
+        pushToast("err", "Could not save tags", String(e));
+      }
+    },
+    [pushToast],
+  );
+
   const saveTrimmed = useCallback(
     async (start: number, end: number) => {
       if (!activeClip) return;
@@ -774,7 +840,9 @@ export default function App() {
         !q || c.title.toLowerCase().includes(q) || c.file_name.toLowerCase().includes(q);
       const matchesAudio = !audioOnly || c.has_audio;
       const matchesGame = gameFilter === "all" || c.game === gameFilter;
-      return matchesQuery && matchesAudio && matchesGame;
+      const matchesFav = !favOnly || c.favorite;
+      const matchesTag = !tagFilter || c.tags.includes(tagFilter);
+      return matchesQuery && matchesAudio && matchesGame && matchesFav && matchesTag;
     });
     const sorted = [...list];
     switch (sortKey) {
@@ -797,7 +865,7 @@ export default function App() {
         sorted.sort((a, b) => b.created_unix_ms - a.created_unix_ms);
     }
     return sorted;
-  }, [clips, query, audioOnly, gameFilter, sortKey]);
+  }, [clips, query, audioOnly, gameFilter, favOnly, tagFilter, sortKey]);
 
   const totalBytes = useMemo(
     () => clips.reduce((acc, c) => acc + c.size_bytes, 0),
@@ -806,6 +874,11 @@ export default function App() {
 
   const games = useMemo(
     () => [...new Set(clips.map((c) => c.game).filter((g): g is string => !!g))].sort(),
+    [clips],
+  );
+
+  const allTags = useMemo(
+    () => [...new Set(clips.flatMap((c) => c.tags))].sort(),
     [clips],
   );
 
@@ -925,6 +998,18 @@ export default function App() {
                     ♪ AUDIO
                   </button>
                   <button
+                    onClick={() => setFavOnly((v) => !v)}
+                    title="Only your favourite clips"
+                    className={cn(
+                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      favOnly
+                        ? "border-amber-300/60 bg-amber-400/15 text-amber-100"
+                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                    )}
+                  >
+                    ★ FAVS
+                  </button>
+                  <button
                     onClick={() => setCompact((v) => !v)}
                     title="Compact grid"
                     className={cn(
@@ -959,6 +1044,34 @@ export default function App() {
                 </div>
               </div>
 
+              {allTags.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-[9px] tracking-[0.18em] text-slate-600">TAGS</span>
+                  {allTags.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
+                      className={cn(
+                        "rounded-full border px-2.5 py-0.5 font-mono text-[10px] tracking-[0.1em] transition",
+                        tagFilter === t
+                          ? "border-fuchsia-300/70 bg-fuchsia-500/20 text-fuchsia-100"
+                          : "border-white/10 text-slate-400 hover:border-fuchsia-300/40 hover:text-fuchsia-200",
+                      )}
+                    >
+                      #{t}
+                    </button>
+                  ))}
+                  {tagFilter && (
+                    <button
+                      onClick={() => setTagFilter(null)}
+                      className="rounded-full border border-white/10 px-2 py-0.5 font-mono text-[9px] text-slate-500 transition hover:text-slate-200"
+                    >
+                      CLEAR
+                    </button>
+                  )}
+                </div>
+              )}
+
               <GalleryGrid
                 clips={filtered}
                 loading={loadingClips}
@@ -971,6 +1084,7 @@ export default function App() {
                 onReveal={(c) => void revealClip(c)}
                 onOpenExternal={(c) => void openExternalClip(c)}
                 onDelete={(c) => void deleteClip(c)}
+                onToggleFavorite={(c) => void toggleFavorite(c)}
               />
             </section>
           </div>
@@ -1186,6 +1300,8 @@ export default function App() {
             setActiveClip(null);
           }}
           onSaveTrimmed={saveTrimmed}
+          onToggleFavorite={() => toggleFavorite(activeClip)}
+          onUpdateTags={(tags) => updateTags(activeClip, tags)}
         />
       )}
 

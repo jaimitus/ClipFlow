@@ -31,6 +31,13 @@ pub struct ClipMetadata {
     /// `data:image/png;base64,...` - inlined so the webview needs no extra
     /// filesystem scope for the gallery.
     pub thumbnail: Option<String>,
+    /// Starred by the user (sidecar `clip_meta.json`). Defaults to false for
+    /// files with no stored metadata.
+    #[serde(default)]
+    pub favorite: bool,
+    /// User-added tags (sidecar `clip_meta.json`).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +137,8 @@ fn scan_into(
             has_audio: probe.has_audio,
             game,
             thumbnail,
+            favorite: false,
+            tags: Vec::new(),
         });
     }
     Ok(())

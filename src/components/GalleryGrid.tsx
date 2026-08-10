@@ -13,6 +13,7 @@ interface Props {
   onReveal: (clip: ClipMetadata) => void;
   onOpenExternal: (clip: ClipMetadata) => void;
   onDelete: (clip: ClipMetadata) => void;
+  onToggleFavorite: (clip: ClipMetadata) => void;
 }
 
 function IconButton({
@@ -55,6 +56,7 @@ function ClipCard({
   onReveal,
   onOpenExternal,
   onDelete,
+  onToggleFavorite,
 }: {
   clip: ClipMetadata;
   compact?: boolean;
@@ -63,6 +65,7 @@ function ClipCard({
   onReveal: (c: ClipMetadata) => void;
   onOpenExternal: (c: ClipMetadata) => void;
   onDelete: (c: ClipMetadata) => void;
+  onToggleFavorite: (c: ClipMetadata) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [hovering, setHovering] = useState(false);
@@ -133,7 +136,22 @@ function ClipCard({
           {clip.height}p{clip.fps}
         </span>
 
+        {clip.favorite && (
+          <span className="absolute left-2 top-8 rounded bg-amber-400/90 px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wide text-black">
+            ★
+          </span>
+        )}
+
         <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+          <IconButton
+            label={clip.favorite ? "★" : "☆"}
+            title={clip.favorite ? "Remove from favourites" : "Add to favourites"}
+            tone="slate"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(clip);
+            }}
+          />
           <IconButton
             label="▶"
             title="Open in external player"
@@ -175,6 +193,21 @@ function ClipCard({
 
       <div className={compact ? "px-2.5 py-2" : "px-3 py-2.5"}>
         <div className="truncate text-[13px] font-medium text-slate-100">{clip.title}</div>
+        {clip.tags.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {clip.tags.slice(0, 3).map((t) => (
+              <span
+                key={t}
+                className="rounded-full border border-fuchsia-300/25 bg-fuchsia-500/10 px-1.5 py-px font-mono text-[9px] text-fuchsia-200/90"
+              >
+                #{t}
+              </span>
+            ))}
+            {clip.tags.length > 3 && (
+              <span className="font-mono text-[9px] text-slate-600">+{clip.tags.length - 3}</span>
+            )}
+          </div>
+        )}
         <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-500">
           <span>{formatRelativeTime(clip.created_unix_ms)}</span>
           <span>{formatBytes(clip.size_bytes)}</span>
@@ -193,6 +226,7 @@ export default function GalleryGrid({
   onReveal,
   onOpenExternal,
   onDelete,
+  onToggleFavorite,
 }: Props) {
   const gridClass = compact
     ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
@@ -238,6 +272,7 @@ export default function GalleryGrid({
           onReveal={onReveal}
           onOpenExternal={onOpenExternal}
           onDelete={onDelete}
+          onToggleFavorite={onToggleFavorite}
         />
       ))}
     </div>

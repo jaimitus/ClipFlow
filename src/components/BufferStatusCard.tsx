@@ -141,10 +141,16 @@ export default function BufferStatusCard({ stats, hotkey, busy, onToggle, onSave
             >
               {meta.label}
             </div>
-            <div className="mt-0.5 font-mono text-[11px] text-slate-500">
-              {stats.width || 0}×{stats.height || 0} · {stats.target_fps} fps target ·{" "}
-              {stats.capture_fps.toFixed(0)} fps actual
-            </div>
+            {stats.privacy_active ? (
+              <div className="mt-0.5 font-mono text-[11px] text-amber-300/90">
+                🔒 PRIVACY PAUSED — no game focused · buffer empty
+              </div>
+            ) : (
+              <div className="mt-0.5 font-mono text-[11px] text-slate-500">
+                {stats.width || 0}×{stats.height || 0} · {stats.target_fps} fps target ·{" "}
+                {stats.capture_fps.toFixed(0)} fps actual
+              </div>
+            )}
           </div>
         </div>
 

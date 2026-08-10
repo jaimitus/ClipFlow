@@ -26,6 +26,10 @@ interface Props {
   onSplit: (splitSeconds: number) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onClose: () => void;
+  /** Stars / unstars this clip (persisted in the local sidecar store). */
+  onToggleFavorite: () => Promise<void> | void;
+  /** Replaces this clip's custom tags. */
+  onUpdateTags: (tags: string[]) => Promise<void> | void;
 }
 
 const HANDLE_W = 14;
@@ -43,6 +47,8 @@ export default function ClipTrimmerModal({
   onSplit,
   onDiscard,
   onClose,
+  onToggleFavorite,
+  onUpdateTags,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -57,6 +63,7 @@ export default function ClipTrimmerModal({
   const [status, setStatus] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(clip.file_name);
+  const [tagDraft, setTagDraft] = useState("");
 
   const src = clip.preview_url ?? assetUrl(clip.path);
   const hasVideo = src.length > 0;
@@ -306,6 +313,18 @@ export default function ClipTrimmerModal({
               </span>
             )}
             <button
+              onClick={() => void onToggleFavorite()}
+              title={clip.favorite ? "Remove from favourites" : "Add to favourites"}
+              className={cn(
+                "no-drag grid h-7 w-7 place-items-center rounded-md border text-[13px] transition",
+                clip.favorite
+                  ? "border-amber-300/60 bg-amber-400/15 text-amber-200"
+                  : "border-white/10 text-slate-400 hover:border-amber-300/50 hover:text-amber-200",
+              )}
+            >
+              {clip.favorite ? "★" : "☆"}
+            </button>
+            <button
               onClick={onClose}
               className="no-drag grid h-7 w-7 place-items-center rounded-md border border-white/10 text-slate-400 transition hover:border-rose-400/40 hover:text-rose-300"
               aria-label="Close trimmer"
@@ -313,6 +332,44 @@ export default function ClipTrimmerModal({
               ✕
             </button>
           </div>
+        </div>
+
+        {/* Tags editor */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-white/5 bg-black/20 px-4 py-2.5">
+          <span className="font-mono text-[9px] tracking-[0.18em] text-slate-600">TAGS</span>
+          {clip.tags.map((t) => (
+            <span
+              key={t}
+              className="group flex items-center gap-1 rounded-full border border-fuchsia-300/30 bg-fuchsia-500/10 px-2.5 py-0.5 font-mono text-[10px] text-fuchsia-100"
+            >
+              #{t}
+              <button
+                onClick={() => void onUpdateTags(clip.tags.filter((x) => x !== t))}
+                title={`Remove tag ${t}`}
+                className="text-fuchsia-300/50 transition hover:text-rose-300"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+          <input
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const tag = tagDraft.trim();
+              if (!tag || clip.tags.includes(tag)) {
+                setTagDraft("");
+                return;
+              }
+              void onUpdateTags([...clip.tags, tag]);
+              setTagDraft("");
+            }}
+            placeholder="+ add tag…"
+            spellCheck={false}
+            className="w-28 rounded-full border border-white/10 bg-black/40 px-2.5 py-0.5 font-mono text-[10px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-fuchsia-300/50"
+          />
         </div>
 
         {/* Player */}

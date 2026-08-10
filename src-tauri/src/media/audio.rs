@@ -9,7 +9,10 @@
 //! guesswork, no "add 40 ms and hope" - the muxer just writes the stamps.
 //!
 //! The mic is mixed into the loopback stream in the float domain with a -3 dB
-//! pad on both sources to avoid inter-sample clipping.
+//! pad on both sources to avoid inter-sample clipping. The mix balance is
+//! user-controlled: `game_gain`/`mic_gain` carry the permille volumes (0-1000)
+//! set in Settings, read fresh on every loop so changes apply live without an
+//! engine restart.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -34,6 +37,8 @@ impl AudioCapture {
     pub fn start(
         system: bool,
         mic: bool,
+        game_gain: Arc<AtomicU32>,
+        mic_gain: Arc<AtomicU32>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
         status: Arc<Mutex<Option<String>>>,
@@ -43,13 +48,15 @@ impl AudioCapture {
 
         if system || mic {
             let stop_c = Arc::clone(&stop);
+            let gg_c = Arc::clone(&game_gain);
+            let mg_c = Arc::clone(&mic_gain);
             let ring_c = Arc::clone(&ring);
             let gen_c = Arc::clone(&generation);
             let status_c = Arc::clone(&status);
             let h = std::thread::Builder::new()
                 .name("clipflow-audio".into())
                 .spawn(move || {
-                    imp::run(system, mic, stop_c, ring_c, gen_c, status_c);
+                    imp::run(system, mic, gg_c, mg_c, stop_c, ring_c, gen_c, status_c);
                 })
                 .map_err(|e| RecorderError::Other(format!("audio thread: {e}")))?;
             handles.push(h);
@@ -346,6 +353,8 @@ mod imp {
     pub(super) fn run(
         system: bool,
         mic: bool,
+        game_gain: Arc<AtomicU32>,
+        mic_gain: Arc<AtomicU32>,
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
@@ -425,14 +434,36 @@ mod imp {
                     continue;
                 }
 
+                let loopback_before = pending.len();
                 if let Some(ep) = loopback.as_ref() {
                     drain_endpoint(ep, &mut pending, &mut qpc_first);
                 }
+                let mic_before = mic_pending.len();
                 if let Some(ep) = microphone.as_ref() {
                     drain_endpoint(ep, &mut mic_pending, &mut qpc_first);
                 }
 
-                // Mix the mic in, sample-aligned, -3 dB per source.
+                // Apply the mix balance to the samples captured *this* loop
+                // only, so gains change live without ever scaling an
+                // already-captured batch twice (and without leaving the tail
+                // of a batch ungained). At 100 % the loops are no-ops and the
+                // output is byte-identical to the original fixed mix.
+                let gg = game_gain.load(Ordering::Acquire) as f32 * 0.001;
+                let mg = mic_gain.load(Ordering::Acquire) as f32 * 0.001;
+                if gg != 1.0 && pending.len() > loopback_before {
+                    for s in pending.iter_mut().skip(loopback_before) {
+                        *s = (*s * gg).clamp(-1.0, 1.0);
+                    }
+                }
+                if mg != 1.0 && mic_pending.len() > mic_before {
+                    for s in mic_pending.iter_mut().skip(mic_before) {
+                        *s = (*s * mg).clamp(-1.0, 1.0);
+                    }
+                }
+
+                // Mix the mic in, sample-aligned, -3 dB per source — the same
+                // pad as the original fixed mix; user volumes already rode on
+                // top of the samples above.
                 if !mic_pending.is_empty() {
                     if loopback.is_none() {
                         pending.append(&mut mic_pending);
@@ -513,6 +544,8 @@ mod imp {
     pub(super) fn run(
         _system: bool,
         _mic: bool,
+        _game_gain: Arc<AtomicU32>,
+        _mic_gain: Arc<AtomicU32>,
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,

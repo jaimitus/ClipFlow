@@ -126,7 +126,9 @@ pub fn trigger_save(app: AppHandle) {
         state.engine.set_output_subfolder(game_folder.clone());
 
         // The foreground is sampled inside the same blocking task so a hung
-        // foreground window cannot stall the async runtime.
+        // foreground window cannot stall the async runtime. The privacy check
+        // runs there too: never flush desktop footage from a hotkey.
+        let privacy_enabled = state.settings.read().privacy_pause_when_unfocused;
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = match flush_lock.try_lock() {
                 Some(g) => g,
@@ -141,6 +143,24 @@ pub fn trigger_save(app: AppHandle) {
             };
             let focused = crate::foreground::get_foreground_game();
             let focused_err = focused.clone();
+            if privacy_enabled {
+                let is_game = focused
+                    .as_ref()
+                    .map(|g| {
+                        let e = g.exe.to_ascii_lowercase();
+                        !e.starts_with("clipflow") && !e.starts_with("explorer")
+                    })
+                    .unwrap_or(false);
+                if !is_game {
+                    return Err((
+                        crate::media::recorder::RecorderError::Other(
+                            "Privacy mode: nothing recorded — no game is focused. Focus a game to arm the buffer again."
+                                .into(),
+                        ),
+                        focused_err,
+                    ));
+                }
+            }
             engine
                 .flush_to_disk(None)
                 .map(|w| (w, focused))
@@ -175,6 +195,8 @@ pub fn trigger_save(app: AppHandle) {
                     has_audio: write.has_audio,
                     game: game_folder,
                     thumbnail,
+                    favorite: false,
+                    tags: Vec::new(),
                 };
 
                 // Never steal focus from a fullscreen game. Raising the deck

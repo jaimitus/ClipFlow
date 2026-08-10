@@ -49,6 +49,8 @@ export interface EngineStats {
   audio_drift_ms: number;
   /** Why audio is missing (device in exclusive mode, AAC failure...), if any. */
   audio_error: string | null;
+  /** Privacy mode: no game is focused, so capture is paused (ring empty). */
+  privacy_active: boolean;
   uptime_seconds: number;
   last_error: string | null;
 }
@@ -68,6 +70,10 @@ export interface ClipMetadata {
   /** Per-game folder tag (e.g. "cs2"), null for clips at the output root. */
   game: string | null;
   thumbnail: string | null;
+  /** Starred by the user (persisted in the local sidecar store). */
+  favorite: boolean;
+  /** User-added tags (persisted in the local sidecar store). */
+  tags: string[];
   /** Browser-simulation only: object URL for the preview player. */
   preview_url?: string;
 }
@@ -137,6 +143,15 @@ export interface AppSettings {
   autosaveOnGameExit: boolean;
   /** Show the always-on-top recording indicator while armed. */
   hudEnabled: boolean;
+  /**
+   * Privacy mode: when no game has the foreground focus the buffer stops
+   * accumulating (and is cleared), so clips can never contain desktop content.
+   */
+  privacyPauseWhenUnfocused: boolean;
+  /** System (game) audio volume in the mix, 0-100. Applies live. */
+  gameVolume: number;
+  /** Microphone volume in the mix, 0-100. Applies live. */
+  micVolume: number;
 }
 
 /** One per-game capture preset. `id` is a stable slug like "competitivo". */
