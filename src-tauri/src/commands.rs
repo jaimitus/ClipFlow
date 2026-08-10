@@ -189,9 +189,23 @@ pub fn resolve_game_folder(state: &AppState, game_override: Option<&str>) -> Opt
     crate::foreground::get_foreground_game().and_then(|g| game_folder_name(&g.exe))
 }
 
-/// When privacy mode is on and no game currently owns the foreground, saving
-/// would flush desktop footage (or an empty buffer). Returns the message to
-/// surface to the user, or `None` when saving is fine.
+/// The single source of truth for the privacy gate: pause only when the
+/// foreground is *positively* our own deck or the desktop. When the query
+/// returns `None` (elevated game, protected process, lock screen) we keep
+/// recording — breaking Alt+C for an undetected game is worse than a rare
+/// ambiguous frame. Mirrored by the deck's `gated` computation in App.tsx.
+/// Uses the title-less [`crate::foreground::foreground_exe`] so it is safe on
+/// the main thread (no blocking `GetWindowTextW`).
+pub fn privacy_should_gate() -> bool {
+    match crate::foreground::foreground_exe() {
+        Some(e) => e.starts_with("clipflow") || e.starts_with("explorer"),
+        None => false,
+    }
+}
+
+/// When privacy mode is on and the foreground is positively the desktop or
+/// our own deck, saving would flush desktop footage (or an empty buffer).
+/// Returns the message to surface to the user, or `None` when saving is fine.
 pub fn privacy_blocked_message(state: &AppState, game_override: Option<&str>) -> Option<String> {
     let s = state.settings.read();
     if !s.privacy_pause_when_unfocused {
@@ -200,17 +214,13 @@ pub fn privacy_blocked_message(state: &AppState, game_override: Option<&str>) ->
     if game_override.is_some() {
         return None; // auto-save tags a game that just lost focus: gameplay
     }
-    match crate::foreground::get_foreground_game() {
-        // "A game" = any foreground app that is not our own deck or the
-        // desktop — the same loose heuristic the deck's privacy gate uses.
-        Some(g) if {
-            let e = g.exe.to_ascii_lowercase();
-            !e.starts_with("clipflow") && !e.starts_with("explorer")
-        } => None,
-        _ => Some(
+    if privacy_should_gate() {
+        Some(
             "Privacy mode: nothing recorded — no game is focused. Focus a game to arm the buffer again."
                 .to_string(),
-        ),
+        )
+    } else {
+        None
     }
 }
 
@@ -702,14 +712,7 @@ pub fn update_settings(
         // immediately instead of waiting for the next 2 s foreground poll.
         // Turning it off un-gates right away too.
         if v {
-            let gate = match crate::foreground::get_foreground_game() {
-                Some(g) if {
-                    let e = g.exe.to_ascii_lowercase();
-                    !e.starts_with("clipflow") && !e.starts_with("explorer")
-                } => false,
-                _ => true,
-            };
-            state.engine.set_privacy_gate(gate);
+            state.engine.set_privacy_gate(privacy_should_gate());
         } else {
             state.engine.set_privacy_gate(false);
         }

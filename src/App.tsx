@@ -505,15 +505,17 @@ export default function App() {
       lastFocusedExe = exe;
       focusedSince = Date.now();
 
-      // Privacy mode: as soon as no game owns the focus (our own deck or the
-      // desktop included), gate the engine so the ring is cleared and capture
-      // pauses — clips can then never contain non-gameplay content. Runs AFTER
-      // the auto-save check so the last 30 s of a closed game are still
-      // flushed before the gate drops the history. Only calls the backend when
-      // the gate state actually flips.
+      // Privacy mode: gate the engine only when the foreground is *positively*
+      // our own deck or the desktop, so the ring is cleared and capture pauses
+      // — clips can never contain desktop content. If the foreground query
+      // fails (elevated/anti-cheat games deny the query from a non-admin
+      // ClipFlow), we keep recording: breaking Alt+C mid-match is worse than
+      // an ambiguous frame. Mirrors privacy_should_gate() on the Rust side.
+      // Runs AFTER the auto-save check so the last 30 s of a closed game are
+      // still flushed before the gate drops the history.
       if (settingsRef.current.privacyPauseWhenUnfocused) {
         const gated =
-          !game || exe.startsWith("clipflow") || exe.startsWith("explorer");
+          !!game && (exe.startsWith("clipflow") || exe.startsWith("explorer"));
         if (gated !== lastPrivacyGate.current) {
           lastPrivacyGate.current = gated;
           await clipflow.setPrivacyGate(gated);

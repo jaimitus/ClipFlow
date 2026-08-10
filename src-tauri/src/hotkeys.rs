@@ -144,14 +144,16 @@ pub fn trigger_save(app: AppHandle) {
             let focused = crate::foreground::get_foreground_game();
             let focused_err = focused.clone();
             if privacy_enabled {
-                let is_game = focused
+                // Pause only on a *positive* deck/desktop detection; when the
+                // query fails (elevated game) we keep recording and saving.
+                let gated = focused
                     .as_ref()
                     .map(|g| {
                         let e = g.exe.to_ascii_lowercase();
-                        !e.starts_with("clipflow") && !e.starts_with("explorer")
+                        e.starts_with("clipflow") || e.starts_with("explorer")
                     })
                     .unwrap_or(false);
-                if !is_game {
+                if gated {
                     return Err((
                         crate::media::recorder::RecorderError::Other(
                             "Privacy mode: nothing recorded — no game is focused. Focus a game to arm the buffer again."

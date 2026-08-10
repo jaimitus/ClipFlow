@@ -110,15 +110,14 @@ pub fn run() {
                 }
             }
 
-            // Privacy mode starts gated: if no game is focused at launch, the
-            // ring must never accumulate desktop footage before the UI's first
-            // 2 s foreground poll has a chance to run.
+            // Privacy mode starts gated when the deck or desktop is focused
+            // (positively known), so the ring never accumulates desktop footage
+            // before the UI's first 2 s foreground poll has a chance to run.
             if handle.state::<AppState>().settings.read().privacy_pause_when_unfocused {
-                let gate = match crate::foreground::get_foreground_game() {
-                    Some(g) if !g.exe.to_ascii_lowercase().starts_with("clipflow") => false,
-                    _ => true,
-                };
-                handle.state::<AppState>().engine.set_privacy_gate(gate);
+                handle
+                    .state::<AppState>()
+                    .engine
+                    .set_privacy_gate(commands::privacy_should_gate());
             }
 
             // Arm the buffer immediately so the very first Alt+C already has

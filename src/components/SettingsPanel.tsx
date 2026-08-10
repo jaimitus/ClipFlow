@@ -367,7 +367,7 @@ export default function SettingsPanel({
           />
         </Row>
 
-        <Row label="Privacy mode" hint="Only record while a game has focus. When you alt-tab to the desktop (or any app), the buffer pauses and clears — clips can never contain non-gameplay content.">
+        <Row label="Privacy mode" hint="Pauses capture whenever the desktop or ClipFlow is focused, so the buffer only ever holds gameplay. Works with the game in the foreground (elevated games included).">
           <Toggle
             on={settings.privacyPauseWhenUnfocused}
             onClick={() => onChange({ privacyPauseWhenUnfocused: !settings.privacyPauseWhenUnfocused })}
