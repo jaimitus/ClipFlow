@@ -48,9 +48,6 @@ const PRIVACY_HYSTERESIS_MS = 5000;
  */
 const ECO_HYSTERESIS_MS = 6000;
 
-/** How long an injected ECO simulation lasts before it expires on its own. */
-const ECO_SIM_DURATION_MS = 30_000;
-
 /** Gallery pagination: how many clips each LOAD MORE page reveals. The grid is
  * virtualised on top of this, so even the full library stays DOM-light; the
  * page size just bounds the initial render and scroll extent for thousands of
@@ -154,14 +151,6 @@ export default function App() {
   // Live battery/RAM snapshot for the Settings telemetry row — polled even
   // when ECO is off so the panel always shows what the machine is doing.
   const [powerNow, setPowerNow] = useState<PowerState | null>(null);
-  // ECO simulation (desktop testing): injects a fake battery/RAM state for
-  // SIM_DURATION_MS so the whole ECO loop is verifiable without a laptop.
-  const [ecoSim, setEcoSim] = useState<"battery" | "ram" | null>(null);
-  const ecoSimUntil = useRef(0);
-  // Mirrors `ecoSim` for the poll interval without re-subscribing it — set in
-  // `simulateEco` (never during render, so StrictMode double-render can't
-  // clobber a just-started simulation).
-  const ecoSimRef = useRef<"battery" | "ram" | null>(null);
   const [onboarding, setOnboarding] = useState<boolean>(() => {
     try {
       return localStorage.getItem("clipflow.onboarding.seen") !== "1";
@@ -690,32 +679,6 @@ export default function App() {
           ? prev
           : power,
       );
-      // Desktop testing: an injected simulation shadows the real snapshot
-      // until it expires on its own.
-      const sim = ecoSimRef.current;
-      if (sim && Date.now() >= ecoSimUntil.current) {
-        ecoSimUntil.current = 0;
-        ecoSimRef.current = null;
-        setEcoSim(null);
-      }
-      const activeSim = sim && Date.now() < ecoSimUntil.current ? sim : null;
-      if (activeSim) {
-        power =
-          activeSim === "battery"
-            ? {
-                onBattery: true,
-                batteryPercent: 15,
-                availableRamBytes: power.availableRamBytes,
-                totalRamBytes: power.totalRamBytes,
-              }
-            : {
-                onBattery: false,
-                batteryPercent: 100,
-                // 1.5 GiB free — well under the default 4 GiB threshold.
-                availableRamBytes: 1.5 * 1024 * 1024 * 1024,
-                totalRamBytes: power.totalRamBytes,
-              };
-      }
       if (!settingsRef.current.adaptiveEco) {
         // ECO off: restore any shrunk buffer right away, then idle.
         if (ecoAppliedBuffer.current !== null) {
@@ -763,25 +726,6 @@ export default function App() {
       cancelled = true;
       window.clearInterval(iv);
     };
-  }, [pushToast]);
-
-  /** Injects a fake battery/RAM state for ECO_SIM_DURATION_MS (desktop testing). */
-  const simulateEco = useCallback((kind: "battery" | "ram" | null) => {
-    if (kind) {
-      ecoSimUntil.current = Date.now() + ECO_SIM_DURATION_MS;
-      ecoSimRef.current = kind;
-      setEcoSim(kind);
-      pushToast(
-        "info",
-        kind === "battery" ? "Simulating battery 15%" : "Simulating low RAM (1.5 GiB)",
-        "ECO will engage at the next poll — watch the buffer shrink.",
-      );
-    } else {
-      ecoSimUntil.current = 0;
-      ecoSimRef.current = null;
-      setEcoSim(null);
-      pushToast("info", "ECO simulation stopped");
-    }
   }, [pushToast]);
 
   const checkForUpdates = useCallback(async () => {
@@ -1400,7 +1344,6 @@ export default function App() {
               hotkey={settings.hotkeySave}
               busy={busy}
               eco={ecoState}
-              ecoSim={ecoSim}
               onToggle={handleToggle}
               onSave={() => void handleSave()}
             />
@@ -1864,8 +1807,6 @@ export default function App() {
                 version={APP_VERSION}
                 native={native}
                 power={powerNow}
-                ecoSim={ecoSim}
-                onSimulateEco={(kind) => simulateEco(kind)}
                 onChange={(p) => void patchSettings(p)}
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}

@@ -21,6 +21,10 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 use commands::{AppState, EVT_STATS};
 
+/// Throttle for persisting the HUD's dragged position — a drag emits a stream
+/// of move events, and rewriting settings.json at 60 Hz would be wasteful.
+static LAST_HUD_SAVE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(
@@ -152,6 +156,7 @@ pub fn run() {
             let h = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_millis(250));
+                let mut topmost_tick = 0u32;
                 loop {
                     ticker.tick().await;
                     let Some(state) = h.try_state::<AppState>() else {
@@ -161,12 +166,44 @@ pub fn run() {
                     if h.emit(EVT_STATS, stats).is_err() {
                         break;
                     }
+                    // WebView2 can silently drop the HUD's topmost style;
+                    // re-assert it every ~2 s while the HUD is visible so it
+                    // stays pinned above games (incl. borderless fullscreen).
+                    topmost_tick = topmost_tick.wrapping_add(1);
+                    if topmost_tick % 8 == 0 {
+                        if let Some(hud) = h.get_webview_window("hud") {
+                            if hud.is_visible().unwrap_or(false) {
+                                commands::force_topmost(&hud);
+                            }
+                        }
+                    }
                 }
             });
 
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Remember where the user dragged the HUD so it comes back to the
+            // same spot next time the buffer arms (throttled to ~2 writes/s).
+            if let WindowEvent::Moved(pos) = event {
+                if window.label() == "hud" {
+                    let now = std::time::Instant::now();
+                    let due = LAST_HUD_SAVE
+                        .lock()
+                        .map(|last| {
+                            last.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(500))
+                        })
+                        .unwrap_or(false);
+                    if due {
+                        *LAST_HUD_SAVE.lock().unwrap() = Some(now);
+                        if let Some(state) = window.app_handle().try_state::<AppState>() {
+                            let mut s = state.settings.write();
+                            s.hud_position = Some((pos.x, pos.y));
+                            let _ = s.save();
+                        }
+                    }
+                }
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let minimize = window
                     .app_handle()

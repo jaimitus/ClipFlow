@@ -335,10 +335,11 @@ mod imp {
     /// never exhaust memory. The trimmer's UI picks short ranges anyway.
     const MAX_GIF_FRAMES: usize = 600;
     /// Palette pool is capped in bytes (two-pass export never holds more than
-    /// this + one decoded frame in RAM).
-    const PALETTE_POOL_BYTES: usize = 24 * 1024 * 1024;
+    /// this + one decoded frame in RAM). Generous: it only feeds the *global*
+    /// header palette now — each frame gets its own frame-accurate palette.
+    const PALETTE_POOL_BYTES: usize = 64 * 1024 * 1024;
     /// Palette is sampled from at most this many evenly-spaced frames.
-    const PALETTE_SAMPLE_FRAMES: usize = 48;
+    const PALETTE_SAMPLE_FRAMES: usize = 96;
 
     unsafe fn open_reader(path: &Path) -> RResult<IMFSourceReader> {
         let mut attrs: Option<IMFAttributes> = None;
@@ -553,17 +554,22 @@ mod imp {
                 out_w,
                 out_h,
                 &mut |frame| {
-                    // Floyd-Steinberg dithering onto the shared palette: kills
-                    // the banding plain nearest-index mapping leaves behind.
-                    // NeuQuant's O(1) index cube keeps the diffusion cheap even
-                    // at 720 px (the linear 256-colour scan is only for the
-                    // dependency-free `dither_fs_rgb` used in tests).
-                    indices = dither_fs_quant(&frame, out_w, out_h, &palette, &quant);
+                    // Frame-local colour table: NeuQuant is built from THIS
+                    // frame's own pixels, so every frame gets up to 256 colours
+                    // of its own content. A shared global palette has to average
+                    // 150 frames together, which washes the colours out ("few
+                    // colours") and makes the dithering read as visible noise
+                    // ("dots"). With a frame-accurate palette the nearest-index
+                    // error is tiny, so Floyd-Steinberg only smooths the last
+                    // bit of gradient banding.
+                    let fq = color_quant::NeuQuant::new(1, 256, &frame);
+                    let frame_palette = fq.color_map_rgb();
+                    indices = dither_fs_quant(&frame, out_w, out_h, &frame_palette, &fq);
                     let mut gf = gif::Frame::from_palette_pixels(
                         out_w as u16,
                         out_h as u16,
                         indices.clone(),
-                        palette.clone(),
+                        frame_palette.clone(),
                         None,
                     );
                     gf.delay = delay;

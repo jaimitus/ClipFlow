@@ -976,35 +976,90 @@ fn set_window_excluded_from_capture(
     Ok(())
 }
 
+/// Re-asserts HWND_TOPMOST on the HUD. WebView2 can silently drop the topmost
+/// style (e.g. when another topmost window appears or focus changes), which is
+/// the classic "the overlay ended up below the game" symptom. Called after
+/// every show and periodically from the stats heartbeat while the HUD is up.
+#[cfg(windows)]
+pub(crate) fn force_topmost(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND as WinHwnd;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetWindowPos(
+                WinHwnd(hwnd.0 as *mut _),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn force_topmost(_window: &tauri::WebviewWindow) {}
+
 /// Shows / hides the always-on-top recording HUD window. While showing, it is
-/// anchored to the bottom-right corner of the main deck window (the HUD has no
-/// chrome and ignores cursor events, so it never steals focus or clicks) and
-/// is excluded from screen capture so it never appears in recorded clips.
+/// positioned at the last spot the user dragged it to (or the deck's
+/// bottom-right corner on first use) and excluded from screen capture so it
+/// never appears in recorded clips. The HUD receives mouse input so it can be
+/// dragged around, but never steals focus (config `focus: false`).
 #[tauri::command]
 pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
-    const HUD_W: i32 = 190;
-    const HUD_H: i32 = 44;
+    const HUD_W: i32 = 360;
+    const HUD_H: i32 = 60;
     let Some(hud) = app.get_webview_window("hud") else {
         return Ok(());
     };
     if !visible {
+        // Persist the exact spot the HUD landed: the throttled Moved handler
+        // may have skipped the final move events of a drag, so capture the
+        // real position now (one write, no throttle needed).
+        if let Ok(pos) = hud.outer_position() {
+            if let Some(state) = app.try_state::<AppState>() {
+                let mut s = state.settings.write();
+                s.hud_position = Some((pos.x, pos.y));
+                let _ = s.save();
+            }
+        }
         // Remove the capture exclusion first (restore WDA_NONE), then hide.
         let _ = set_window_excluded_from_capture(&hud, false);
         let _ = hud.hide();
         return Ok(());
     }
-    if let Some(main) = app.get_webview_window("main") {
-        if let (Ok(size), Ok(pos)) = (main.inner_size(), main.outer_position()) {
-            let x = pos.x as i32 + size.width as i32 - HUD_W - 18;
-            let y = pos.y as i32 + size.height as i32 - HUD_H - 18;
-            let _ = hud.set_position(tauri::PhysicalPosition::new(x.max(0), y.max(0)));
+    // Restore the position the user dragged the HUD to; fall back to the
+    // deck's bottom-right corner the very first time.
+    let saved = app
+        .try_state::<AppState>()
+        .map(|s| s.settings.read().hud_position)
+        .unwrap_or(None);
+    let mut position = tauri::PhysicalPosition::new(0, 0);
+    match saved {
+        Some((x, y)) => {
+            position.x = x.max(0);
+            position.y = y.max(0);
+        }
+        None => {
+            if let Some(main) = app.get_webview_window("main") {
+                if let (Ok(size), Ok(pos)) = (main.inner_size(), main.outer_position()) {
+                    position.x = pos.x as i32 + size.width as i32 - HUD_W - 18;
+                    position.y = pos.y as i32 + size.height as i32 - HUD_H - 18;
+                }
+            }
         }
     }
-    // The HUD is a passive indicator: never grab focus or clicks.
-    let _ = hud.set_ignore_cursor_events(true);
+    let _ = hud.set_position(position);
     let _ = hud.set_always_on_top(true);
     let _ = hud.show();
-    // From the moment it is visible it must be invisible to capture.
+    // From the moment it is visible it must be invisible to capture, and
+    // pinned above every window — WebView2 can silently drop the topmost
+    // style, so assert it right after showing.
+    force_topmost(&hud);
     let _ = set_window_excluded_from_capture(&hud, true);
     Ok(())
 }

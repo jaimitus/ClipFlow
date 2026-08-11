@@ -99,6 +99,10 @@ pub struct Settings {
     /// Free physical RAM (GiB) below which ECO kicks in.
     #[serde(default = "default_4")]
     pub eco_ram_free_gbs: u32,
+    /// Last user-dragged HUD position (physical screen coords). `None` means
+    /// auto-anchor to the deck's bottom-right corner on show.
+    #[serde(default)]
+    pub hud_position: Option<(i32, i32)>,
 }
 
 fn default_30() -> u32 {
@@ -149,6 +153,7 @@ impl Default for Settings {
             adaptive_eco: false,
             eco_battery_threshold_pct: 30,
             eco_ram_free_gbs: 4,
+            hud_position: None,
         }
     }
 }
