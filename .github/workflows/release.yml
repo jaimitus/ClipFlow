@@ -47,6 +47,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Gate the release with the same local checks. tauri-action's vite build
+      # strips types via esbuild without checking them, so without this step a
+      # tag could publish code that fails tsc or the test suites.
+      - name: Typecheck and unit tests
+        run: npm run typecheck && npm test
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:

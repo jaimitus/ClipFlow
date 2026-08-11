@@ -1,0 +1,61 @@
+name: CI
+
+# Gates every pull request (and every push to main) with the same checks we
+# run locally, so code that breaks `tsc` or the test suites never merges —
+# SonarCloud alone was not enough (a PR with 6 tsc errors passed it).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs: when a new commit lands on the same PR/branch, the
+# in-flight CI run is replaced instead of queuing behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend · typecheck + tests + build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Frontend build (vite)
+        run: npm run build
+
+  rust:
+    name: Rust · cargo test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Unit tests (cargo test)
+        run: cargo test --manifest-path src-tauri/Cargo.toml
