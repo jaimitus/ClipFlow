@@ -189,3 +189,112 @@ fn store_path() -> PathBuf {
     }
     std::env::temp_dir().join("ClipFlow").join("clip_meta.json")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store backed by a throwaway temp file (never touches the real
+    /// `clip_meta.json`). Unique per test so parallel runs never collide.
+    fn store(tag: &str) -> ClipMetaStore {
+        let dir = std::env::temp_dir().join(format!(
+            "clipflow-meta-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        ClipMetaStore {
+            path: dir.join("clip_meta.json"),
+            entries: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn set_favorite_many_stars_all_and_counts_real_changes() {
+        let mut s = store("fav");
+        let paths = ["/a.mp4".to_string(), "/b.mp4".to_string()];
+        assert_eq!(s.set_favorite_many(&paths, true), 2);
+        assert!(s.get("/a.mp4").favorite);
+        assert!(s.get("/b.mp4").favorite);
+        // Re-applying the same value changes nothing.
+        assert_eq!(s.set_favorite_many(&paths, true), 0);
+        // Unstarring both counts as a change again.
+        assert_eq!(s.set_favorite_many(&paths, false), 2);
+        assert!(!s.get("/a.mp4").favorite);
+        assert!(!s.get("/b.mp4").favorite);
+    }
+
+    #[test]
+    fn set_favorite_many_with_empty_paths_is_a_noop() {
+        let mut s = store("fav-empty");
+        assert_eq!(s.set_favorite_many(&[], true), 0);
+    }
+
+    #[test]
+    fn add_tag_many_appends_the_tag_to_each_clip_once() {
+        let mut s = store("tag-add");
+        let paths = ["/a.mp4".to_string(), "/b.mp4".to_string()];
+        assert_eq!(s.add_tag_many(&paths, "clutch"), 2);
+        assert_eq!(s.get("/a.mp4").tags, vec!["clutch"]);
+        // Duplicate add changes nothing.
+        assert_eq!(s.add_tag_many(&paths, "clutch"), 0);
+        assert_eq!(s.get("/b.mp4").tags, vec!["clutch"]);
+    }
+
+    #[test]
+    fn add_tag_many_cleans_the_tag() {
+        let mut s = store("tag-clean");
+        let p = ["/a.mp4".to_string()];
+        // Trimmed, deduped, length-capped.
+        assert_eq!(s.add_tag_many(&p, "  clutch  "), 1);
+        assert_eq!(s.get("/a.mp4").tags, vec!["clutch"]);
+        // Whitespace-only tags are rejected entirely.
+        assert_eq!(s.add_tag_many(&p, "   "), 0);
+        assert_eq!(s.get("/a.mp4").tags, vec!["clutch"]);
+        // Over-long tags are truncated to MAX_TAG_LEN.
+        assert_eq!(s.add_tag_many(&p, &"x".repeat(40)), 1);
+        assert_eq!(s.get("/a.mp4").tags, vec!["clutch".to_string(), "x".repeat(24)]);
+    }
+
+    #[test]
+    fn add_tag_many_stops_at_max_tags() {
+        let mut s = store("tag-cap");
+        let p = ["/a.mp4".to_string()];
+        // Fill a clip to the cap with distinct tags.
+        for i in 0..12 {
+            assert_eq!(s.add_tag_many(&p, &format!("tag{i}")), 1);
+        }
+        assert_eq!(s.get("/a.mp4").tags.len(), 12);
+        // A 13th distinct tag is silently ignored.
+        assert_eq!(s.add_tag_many(&p, "overflow"), 0);
+        assert_eq!(s.get("/a.mp4").tags.len(), 12);
+    }
+
+    #[test]
+    fn remove_tag_many_removes_and_counts_affected_clips() {
+        let mut s = store("tag-rm");
+        let paths = ["/a.mp4".to_string(), "/b.mp4".to_string()];
+        s.add_tag_many(&paths, "clutch");
+        s.add_tag_many(&paths, "ace");
+        // Removing a tag present on both counts both.
+        assert_eq!(s.remove_tag_many(&paths, "clutch"), 2);
+        assert_eq!(s.get("/a.mp4").tags, vec!["ace"]);
+        assert_eq!(s.get("/b.mp4").tags, vec!["ace"]);
+        // Removing a tag nobody has changes nothing.
+        assert_eq!(s.remove_tag_many(&paths, "clutch"), 0);
+        // A clip that never had the tag is not counted.
+        let fresh = ["/c.mp4".to_string()];
+        assert_eq!(s.remove_tag_many(&fresh, "ace"), 0);
+    }
+
+    #[test]
+    fn batch_changes_persist_to_disk() {
+        let mut s = store("persist");
+        let paths = ["/a.mp4".to_string()];
+        s.set_favorite_many(&paths, true);
+        s.add_tag_many(&paths, "clutch");
+        // The sidecar file was written on each batch call — read it back raw.
+        let raw = std::fs::read_to_string(&s.path).unwrap();
+        assert!(raw.contains("\"favorite\": true"), "raw: {raw}");
+        assert!(raw.contains("clutch"), "raw: {raw}");
+    }
+}
