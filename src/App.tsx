@@ -129,6 +129,7 @@ export default function App() {
 
   const native = clipflow.isTauri();
   const toastId = useRef(0);
+  const mainRef = useRef<HTMLElement | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   // Privacy-gate hysteresis lives in a pure, unit-tested state machine
@@ -140,6 +141,30 @@ export default function App() {
   }
   const activeProfileIdRef = useRef(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
+
+  // Gallery scroll restore: capture where the user was when the trimmer opens
+  // and put it back exactly when it closes — even after a trim/split refreshed
+  // the list. Main is scroll-locked while the modal is up (inline style on
+  // <main>, so React removes it automatically on unmount) and the gallery
+  // can't drift behind the overlay and make the restore fight the user.
+  const galleryScroll = useRef<number | null>(null);
+  const trimmerWasOpen = useRef(false);
+  useEffect(() => {
+    if (activeClip && !trimmerWasOpen.current) {
+      trimmerWasOpen.current = true;
+      galleryScroll.current = mainRef.current?.scrollTop ?? null;
+    } else if (!activeClip && trimmerWasOpen.current) {
+      trimmerWasOpen.current = false;
+      const top = galleryScroll.current;
+      galleryScroll.current = null;
+      if (top != null) {
+        // Restore on the next frame so the modal unmount commits first.
+        requestAnimationFrame(() => {
+          if (mainRef.current) mainRef.current.scrollTop = top;
+        });
+      }
+    }
+  }, [activeClip]);
 
   const pushToast = useCallback((tone: ToastTone, title: string, body?: string) => {
     const id = ++toastId.current;
@@ -967,7 +992,11 @@ export default function App() {
 
       <TitleBar armed={armed} native={native} version={APP_VERSION} />
 
-      <main className="relative z-10 flex-1 overflow-y-auto">
+      <main
+        ref={mainRef}
+        className="relative z-10 flex-1 overflow-y-auto"
+        style={activeClip ? { overflowY: "hidden" } : undefined}
+      >
         <div className="mx-auto grid max-w-[1400px] gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
           {/* -------------------------------------------------- main column */}
           <div className="space-y-5">

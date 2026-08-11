@@ -255,13 +255,16 @@ export default function ClipTrimmerModal({
   }, [duration]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // The overlay scrolls (instead of the app behind it) so the trimmer stays
+    // reachable on short windows — App locks the gallery scroll while open.
+    <div className="fixed inset-0 z-50 overflow-y-auto p-4">
       <div
-        className="animate-fade absolute inset-0 bg-[#04050c]/85 backdrop-blur-md"
+        className="animate-fade fixed inset-0 bg-[#04050c]/85 backdrop-blur-md"
         onClick={onClose}
       />
 
-      <div className="animate-pop panel scanlines relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl ring-glow">
+      <div className="relative flex min-h-full items-center justify-center">
+        <div className="animate-pop panel scanlines relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl ring-glow">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
           <div className="flex items-center gap-3">
@@ -625,6 +628,7 @@ export default function ClipTrimmerModal({
               SAVE TRIMMED
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>
