@@ -20,4 +20,24 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
   },
+  build: {
+    target: "esnext",
+    minify: "esbuild",
+    cssMinify: true,
+    // Optimizado para app desktop de alto rendimiento
+    chunkSizeWarningLimit: 2000,
+  },
+  optimizeDeps: {
+    include: ["react", "react-dom", "clsx", "tailwind-merge"],
+  },
+  // Mejoras de rendimiento para desarrollo
+  server: {
+    warmup: {
+      clientFiles: ["./src/components/*", "./src/hooks/*"],
+    },
+  },
+  // Previene re-renderizados innecesarios en React
+  esbuild: {
+    jsxInject: `import React from 'react'`,
+  },
 });

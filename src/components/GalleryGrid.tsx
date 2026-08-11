@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { memo, useRef, useState, useCallback } from "react";
 import { assetUrl } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { formatBytes, formatDuration, formatRelativeTime } from "../lib/format";
 import { cn } from "../utils/cn";
+import { useDebouncedCallback } from "../hooks/usePerformance";
 
 interface Props {
   clips: ClipMetadata[];
@@ -48,7 +49,7 @@ function IconButton({
 }
 
 /** Plays the clip inline on hover, exactly like the native gallery does. */
-function ClipCard({
+const ClipCard = memo(function ClipCard({
   clip,
   compact,
   onOpen,
@@ -71,22 +72,27 @@ function ClipCard({
   const [hovering, setHovering] = useState(false);
   const src = clip.preview_url ?? assetUrl(clip.path);
 
+  // Optimización: Usar callbacks memorizados para eventos de hover
+  const handleMouseEnter = useCallback(() => {
+    setHovering(true);
+    const v = videoRef.current;
+    if (v) {
+      v.currentTime = 0;
+      void v.play().catch(() => undefined);
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setHovering(false);
+    videoRef.current?.pause();
+  }, []);
+
   return (
     <article
       className="panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl"
       onClick={() => onOpen(clip)}
-      onMouseEnter={() => {
-        setHovering(true);
-        const v = videoRef.current;
-        if (v) {
-          v.currentTime = 0;
-          void v.play().catch(() => undefined);
-        }
-      }}
-      onMouseLeave={() => {
-        setHovering(false);
-        videoRef.current?.pause();
-      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <div className="relative aspect-video w-full overflow-hidden bg-black">
         {clip.thumbnail ? (
@@ -97,6 +103,8 @@ function ClipCard({
               "h-full w-full object-cover transition duration-300",
               hovering ? "scale-105 opacity-0" : "opacity-100",
             )}
+            loading="lazy"
+            decoding="async"
           />
         ) : (
           <div className="bg-grid absolute inset-0 grid place-items-center bg-[#080b16]">
@@ -215,7 +223,7 @@ function ClipCard({
       </div>
     </article>
   );
-}
+});
 
 export default function GalleryGrid({
   clips,
