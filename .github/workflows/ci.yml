@@ -57,5 +57,18 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # tauri::generate_context! embeds the built frontend (../dist) at compile
+      # time, so the frontend must be built before cargo can compile the tests.
+      - name: Build frontend (for tauri context)
+        run: |
+          npm ci
+          npm run build
+
       - name: Unit tests (cargo test)
         run: cargo test --manifest-path src-tauri/Cargo.toml
