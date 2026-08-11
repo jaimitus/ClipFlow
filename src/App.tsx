@@ -51,6 +51,12 @@ const ECO_HYSTERESIS_MS = 6000;
 /** How long an injected ECO simulation lasts before it expires on its own. */
 const ECO_SIM_DURATION_MS = 30_000;
 
+/** Gallery pagination: how many clips each LOAD MORE page reveals. The grid is
+ * virtualised on top of this, so even the full library stays DOM-light; the
+ * page size just bounds the initial render and scroll extent for thousands of
+ * clips. */
+const GALLERY_PAGE_SIZE = 60;
+
 /** The dedicated HUD window loads the same bundle with ?hud=1. */
 const IS_HUD =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hud");
@@ -128,6 +134,9 @@ export default function App() {
   const [favOnly, setFavOnly] = useState(initialGallery.favOnly);
   const [tagFilter, setTagFilter] = useState<string | null>(initialGallery.tagFilter);
   const [compact, setCompact] = useState(initialGallery.compact);
+  // LOAD MORE pagination: only the first N filtered clips render; the button
+  // reveals more. Resets to the first page whenever the filter set changes.
+  const [visibleCount, setVisibleCount] = useState(GALLERY_PAGE_SIZE);
   // Multi-select (batch management): pure reducer, paths keyed by clip path.
   const [selection, dispatchSelection] = useReducer(selectionReducer, EMPTY_SELECTION);
   const [selectMode, setSelectMode] = useState(false);
@@ -1125,6 +1134,15 @@ export default function App() {
     return sorted;
   }, [clips, query, audioOnly, gameFilter, favOnly, tagFilter, sortKey]);
 
+  // Paginated view handed to the grid: filters produce the full sorted list,
+  // but only the first `visibleCount` entries render (LOAD MORE reveals the
+  // rest). Batch selection still operates on the FULL filtered list, so a
+  // shift-click range can span pages without loading them first.
+  const visibleClips = useMemo(
+    () => (visibleCount >= filtered.length ? filtered : filtered.slice(0, visibleCount)),
+    [filtered, visibleCount],
+  );
+
   // The visible order for shift-click ranges. Kept in a ref so the selection
   // click handler stays referentially stable (the gallery is memoised) while
   // still reading the freshest filter/sort at click time.
@@ -1334,6 +1352,12 @@ export default function App() {
   useEffect(() => {
     saveGalleryState({ query, gameFilter, sortKey, audioOnly, favOnly, tagFilter, compact });
   }, [query, gameFilter, sortKey, audioOnly, favOnly, tagFilter, compact]);
+
+  // A different filter/sort produces a different result set — jump back to the
+  // first page so the new list is explored from the top.
+  useEffect(() => {
+    setVisibleCount(GALLERY_PAGE_SIZE);
+  }, [query, gameFilter, sortKey, audioOnly, favOnly, tagFilter]);
 
   return (
     <div className="bg-aurora relative flex h-screen w-screen flex-col overflow-hidden bg-[#05060d]">
@@ -1630,7 +1654,7 @@ export default function App() {
                   skip re-rendering when unrelated state changes (stats poll,
                   toasts…). All of these are useCallback-wrapped above. */}
               <GalleryGrid
-                clips={filtered}
+                clips={visibleClips}
                 loading={loadingClips}
                 compact={compact}
                 selectedPaths={selectedSet}
@@ -1643,6 +1667,29 @@ export default function App() {
                 onDelete={deleteClip}
                 onToggleFavorite={toggleFavorite}
               />
+
+              {visibleClips.length < filtered.length && (
+                <div className="mt-5 flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setVisibleCount((c) => c + GALLERY_PAGE_SIZE)}
+                      className="rounded-xl border border-cyan-300/40 bg-cyan-400/10 px-5 py-2.5 font-mono text-[11px] font-semibold tracking-[0.2em] text-cyan-100 transition hover:border-cyan-300/70 hover:bg-cyan-400/20 active:scale-[0.98]"
+                    >
+                      LOAD MORE · +
+                      {Math.min(GALLERY_PAGE_SIZE, filtered.length - visibleClips.length)}
+                    </button>
+                    <button
+                      onClick={() => setVisibleCount(filtered.length)}
+                      className="rounded-xl border border-white/10 px-4 py-2.5 font-mono text-[11px] tracking-[0.2em] text-slate-400 transition hover:border-white/25 hover:text-slate-200"
+                    >
+                      LOAD ALL ({filtered.length})
+                    </button>
+                  </div>
+                  <span className="font-mono text-[10px] tracking-[0.16em] text-slate-500">
+                    SHOWING {visibleClips.length} OF {filtered.length} FILTERED CLIPS
+                  </span>
+                </div>
+              )}
             </section>
           </div>
 
