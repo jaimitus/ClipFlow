@@ -1,6 +1,6 @@
 [package]
 name = "clipflow"
-version = "1.3.0"
+version = "1.3.1"
 description = "ClipFlow - zero-bloat, privacy-first instant replay & game clipping for Windows"
 authors = ["ClipFlow Contributors"]
 license = "MIT"

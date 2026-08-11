@@ -2,6 +2,27 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-08-11
+
+### Performance
+
+- **⚡ Virtualised clip gallery** — the grid now only mounts the rows near the scroll viewport (windowed rendering with an overscan buffer), so a library with thousands of clips keeps a viewport-full of cards in the DOM instead of thousands of `<img>`/`<video>` nodes. The windowing math lives in a pure, unit-tested module (`src/hooks/useVirtualGrid.ts`); row height is measured once and re-measured on column changes; an IntersectionObserver re-windows when the grid becomes visible again.
+- **🏎️ Memoised cards + stable handlers** — `GalleryGrid` and `ClipCard` are memoised and receive `useCallback` handlers directly (the old inline lambda wrappers made the memo never hit), so the 2 s stats poll, toasts and tab switches no longer re-render the whole gallery. `deleteClip` reads `activeClip` through a ref to stay referentially stable.
+- **🖼️ Lazy/async thumbnails** — gallery thumbnails decode off the main thread (`decoding="async"`, `loading="lazy"`) and hover handlers are stable `useCallback`s.
+
+### UX
+
+- **🔄 Gallery scroll restored** — opening a clip remembers where you were and closing the trimmer puts the scroll exactly back, even after a trim/split refreshed the list. The gallery is scroll-locked while the modal is up (the overlay is its own scroll container, so the trimmer stays reachable on short windows).
+- **💾 Gallery view persists across restarts** — query, game filter, favourites-only, audio-only, tag filter, sort key and compact mode are saved to localStorage and restored on launch (`src/lib/galleryState.ts`, sanitised per-field, corrupt blobs fall back to defaults). A persisted filter pointing at a game/tag that no longer exists falls back gracefully instead of showing an empty library.
+
+### CI
+
+- **🛡️ CI gates every PR and release** — new `ci.yml` runs `tsc --noEmit`, `vitest` and `vite build` (frontend job) plus `cargo test` (Rust job) on every pull request and push to main, with per-branch concurrency. The release workflow now also runs typecheck + unit tests before publishing — a PR with compile errors can no longer pass (SonarCloud alone was not enough).
+
+### Tests
+
+- Test suite grown from 20 to **43** (8 Rust + 35 frontend): 14 windowing-math tests (`computeVisibleRows`, column/breakpoint and gap helpers) and 9 gallery-state persistence tests (sanitisation, round-trip, corrupt storage).
+
 ## [1.3.0] - 2026-08-10
 
 ### Added
