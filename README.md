@@ -25,11 +25,13 @@
 
 Designed for gamers and creators who demand maximum FPS and instant clipping without background resource hogging, ClipFlow continuously records your active display into a rolling memory buffer directly on your GPU. Pressing `Alt + C` instantly flushes your buffer to an MP4 video file in **under 50 milliseconds**.
 
-> ### 🆕 What's new in **1.3.1**
-> - ⚡ **Virtualised gallery** — only the rows near the viewport are mounted, so thousands of clips scroll smoothly with a fraction of the DOM (windowing + memoised cards + lazy/async thumbnails).
-> - 🔄 **Scroll + view restored** — opening a clip puts you back exactly where you were on close, and your filters/sort/compact mode survive app restarts.
-> - 🛡️ **CI gates every PR & release** — `tsc`, `vitest` and `cargo test` now run on every pull request, so broken code can never merge again.
-> - Everything from 1.3.0: 🛡️ privacy mode, 🎚️ game/mic mix balance, ⭐ favourites + tags, 🔧 split-at-playhead reliability, 🧪 43 unit tests (8 Rust + 35 frontend), and from 1.2.0: game-tagged clips & per-game folders, STATS tab, REC HUD, auto-save on game exit, per-game profiles, signed auto-updates, HEVC.
+> ### 🆕 What's new in **1.4.1**
+> - 🎞️ **GIF export** — turn any clip selection into an animated GIF right from the trimmer, now with bilinear resampling + Floyd-Steinberg dithering for smooth, band-free gradients and an accurate export toast (real fps, duration, frames, size).
+> - 🌿 **Adaptive capture (ECO)** — the buffer auto-shrinks when battery is low or RAM is tight, with a live telemetry row and SIMULATE buttons in Settings so you can test it on a desktop.
+> - ⚡ **Instant gallery at thousands of clips** — persistent probe cache (size+mtime), lazy per-card thumbnails, LOAD MORE pagination and infinite scroll on top of the virtualised grid.
+> - 🖥️ **The REC HUD never shows up in clips** — the overlay is excluded from screen capture (`WDA_EXCLUDEFROMCAPTURE`).
+> - 📦 **Batch library management** — multi-select, bulk favourite/tag/copy/delete.
+> - Everything from 1.3.1/1.3.0: ⚡ virtualised gallery + scroll/view persistence, 🛡️ privacy mode, 🎚️ game/mic mix, ⭐ favourites + tags, CI gates, and from 1.2.0: game-tagged clips & per-game folders, STATS tab, REC HUD, auto-save on game exit, per-game profiles, signed auto-updates, HEVC.
 >
 > Full list in [CHANGELOG.md](CHANGELOG.md).
 
@@ -76,9 +78,9 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 
 ### 1. Download & Run
 Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.3.1_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.3.1_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.3.1_x64_en-US.msi` (Windows Installer)
+- **Standalone Portable:** `ClipFlow_v1.4.1_Portable.exe` (Single executable, no installation needed)
+- **Setup Installer:** `ClipFlow_1.4.1_x64-setup.exe` (NSIS Installer)
+- **MSI Package:** `ClipFlow_1.4.1_x64_en-US.msi` (Windows Installer)
 
 > 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 

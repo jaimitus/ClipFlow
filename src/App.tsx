@@ -31,7 +31,7 @@ import type {
 } from "./lib/types";
 import { cn } from "./utils/cn";
 
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.4.1";
 
 /**
  * How long the privacy-gate state must stay put before it actually flips the

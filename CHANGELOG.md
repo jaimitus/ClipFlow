@@ -2,6 +2,26 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] - 2026-08-11
+
+### Added
+
+- **📦 Batch library management** — multi-select mode (plain click, Ctrl-click, Shift-click ranges and an ALL button) with a contextual bar: favourite / unfavourite, add / remove tags, copy paths as a file drop and bulk delete. Selections span pages and survive through the virtualised grid.
+- **🌿 Adaptive capture (ECO)** — when battery is low or free RAM is tight, the rolling buffer shrinks to a preset (30 s) with an fps cap and restores itself as soon as conditions clear, live on the running engine (the persisted setting is never touched). Settings shows a live battery/RAM telemetry row and **SIMULATE BATTERY 15% / SIMULATE LOW RAM** buttons so the whole loop is testable on a desktop.
+- **🎞️ GIF export** — the trimmer exports the selection as an animated GIF (160–720 px, 5–30 fps) straight from the clip via Media Foundation + pure-Rust encoding: no ffmpeg, no temp files, two-pass bounded memory.
+- **⚡ Probe cache + lazy thumbnails** — the gallery scan keys on (size, mtime) in a persistent cache (`probe_cache.json` in AppData), so a library of thousands of clips rescans as a stat-call walk instead of opening Media Foundation per file. Orphaned entries are pruned and the cache saves atomically (temp-file + rename). Thumbnails decode lazily per visible card with a capped LRU cache.
+- **📜 LOAD MORE pagination + infinite scroll** — the gallery renders clips in pages of 60 with a **LOAD MORE · +N / LOAD ALL** fallback row, and auto-loads the next page as you scroll near the bottom (IntersectionObserver sentinel, 480 px pre-load). The page resets when the filter/sort set changes; batch selection still works across unloaded pages.
+
+### Fixed
+
+- **GIFs looked smeared and banded** — bilinear resampling replaces nearest-neighbour and Floyd-Steinberg dithering (NeuQuant's O(1) lookup on the export path) kills the banding on gradients; the palette is sampled from more frames.
+- **GIF toast reported wrong numbers** — the export confirmation now shows the real playback fps (100/delay), duration, frame count and file size.
+- **The REC HUD appeared inside clips** — the overlay window is excluded from screen capture via `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, so gameplay clips never contain it.
+
+### Tests
+
+- Suite grown to **36 Rust + 61 frontend** (97 total): GIF pixel math (bilinear blends, dithering bounds), probe-cache mechanics (miss persists, hit without rewrite, re-probe on change, orphan pruning, atomic save), ClipMetaStore batch methods, windowing math, privacy-gate and ECO hysteresis.
+
 ## [1.3.1] - 2026-08-11
 
 ### Performance
