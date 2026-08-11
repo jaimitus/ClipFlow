@@ -3,6 +3,7 @@ import { assetUrl } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { formatBytes, formatDuration, formatRelativeTime } from "../lib/format";
 import { cn } from "../utils/cn";
+import { gapFor, useVirtualGrid } from "../hooks/useVirtualGrid";
 
 interface Props {
   clips: ClipMetadata[];
@@ -53,6 +54,10 @@ function IconButton({
  * Memoised: App passes stable useCallback handlers and `clips` comes from a
  * `useMemo`, so a card only re-renders when its own clip (or `compact`)
  * actually changes — not on the 2 s stats poll or toast churn.
+ *
+ * The footer reserves a fixed tag line so every card in a row has the exact
+ * same height — that's what lets the virtualised grid place rows at a uniform
+ * pitch without overlap.
  */
 const ClipCard = memo(function ClipCard({
   clip,
@@ -204,23 +209,28 @@ const ClipCard = memo(function ClipCard({
         </div>
       </div>
 
+      {/* Fixed heights throughout so every card in a row is identical in size. */}
       <div className={compact ? "px-2.5 py-2" : "px-3 py-2.5"}>
-        <div className="truncate text-[13px] font-medium text-slate-100">{clip.title}</div>
-        {clip.tags.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {clip.tags.slice(0, 3).map((t) => (
-              <span
-                key={t}
-                className="rounded-full border border-fuchsia-300/25 bg-fuchsia-500/10 px-1.5 py-px font-mono text-[9px] text-fuchsia-200/90"
-              >
-                #{t}
-              </span>
-            ))}
-            {clip.tags.length > 3 && (
-              <span className="font-mono text-[9px] text-slate-600">+{clip.tags.length - 3}</span>
-            )}
-          </div>
-        )}
+        <div className="h-5 truncate text-[13px] font-medium text-slate-100">{clip.title}</div>
+        <div className="mt-1 flex h-4 items-center gap-1 overflow-hidden">
+          {clip.tags.length > 0 && (
+            <>
+              {clip.tags.slice(0, 3).map((t) => (
+                <span
+                  key={t}
+                  className="shrink-0 rounded-full border border-fuchsia-300/25 bg-fuchsia-500/10 px-1.5 py-px font-mono text-[9px] text-fuchsia-200/90"
+                >
+                  #{t}
+                </span>
+              ))}
+              {clip.tags.length > 3 && (
+                <span className="shrink-0 font-mono text-[9px] text-slate-600">
+                  +{clip.tags.length - 3}
+                </span>
+              )}
+            </>
+          )}
+        </div>
         <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-500">
           <span>{formatRelativeTime(clip.created_unix_ms)}</span>
           <span>{formatBytes(clip.size_bytes)}</span>
@@ -231,9 +241,10 @@ const ClipCard = memo(function ClipCard({
 });
 
 /**
- * Memoised grid: all props are stable (useCallback handlers + useMemo clips),
- * so unrelated App state (stats poll, toasts, tab switches) skips the whole
- * grid reconciliation instead of mapping over every card.
+ * Virtualised grid: only the rows inside (or near) the scroll viewport are
+ * mounted, so thousands of clips keep a handful of cards in the DOM. All props
+ * are stable (useCallback handlers + useMemo clips), so unrelated App state
+ * (stats poll, toasts, tab switches) skips the whole reconciliation.
  */
 const GalleryGrid = memo(function GalleryGrid({
   clips,
@@ -246,22 +257,28 @@ const GalleryGrid = memo(function GalleryGrid({
   onDelete,
   onToggleFavorite,
 }: Props) {
+  const gap = gapFor(!!compact);
+  const { cols, rowPitch, totalHeight, startRow, endRow, containerRef, rowRef } =
+    useVirtualGrid({ itemCount: clips.length, compact: !!compact });
+
   const gridClass = compact
     ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
     : "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
+  // The container is ALWAYS mounted (even while loading / empty) so the
+  // virtual-grid hook's ResizeObserver/scroll wiring exists from the very
+  // first render — when the first clips land, the window is already live.
+  let content: React.ReactNode;
   if (loading) {
-    return (
+    content = (
       <div className={gridClass}>
         {Array.from({ length: compact ? 8 : 6 }).map((_, i) => (
           <div key={i} className="panel h-[190px] animate-pulse rounded-xl opacity-50" />
         ))}
       </div>
     );
-  }
-
-  if (clips.length === 0) {
-    return (
+  } else if (clips.length === 0) {
+    content = (
       <div className="panel bg-grid flex flex-col items-center justify-center gap-3 rounded-2xl px-6 py-16 text-center">
         <div className="grid h-14 w-14 place-items-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 text-2xl">
           🎬
@@ -276,23 +293,43 @@ const GalleryGrid = memo(function GalleryGrid({
         </p>
       </div>
     );
+  } else {
+    const rows: React.ReactNode[] = [];
+  for (let r = startRow; r < endRow; r++) {
+    const from = r * cols;
+    rows.push(
+      <div
+        key={r}
+        ref={r === startRow ? rowRef : undefined}
+        className="absolute left-0 right-0 grid"
+        style={{
+          top: r * rowPitch,
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gap: `${gap}px`,
+        }}
+      >
+        {clips.slice(from, from + cols).map((clip) => (
+          <ClipCard
+            key={clip.id}
+            clip={clip}
+            compact={compact}
+            onOpen={onOpen}
+            onCopy={onCopy}
+            onReveal={onReveal}
+            onOpenExternal={onOpenExternal}
+            onDelete={onDelete}
+            onToggleFavorite={onToggleFavorite}
+          />
+        ))}
+      </div>,
+    );
+    }
+    content = rows;
   }
 
   return (
-    <div className={gridClass}>
-      {clips.map((clip) => (
-        <ClipCard
-          key={clip.id}
-          clip={clip}
-          compact={compact}
-          onOpen={onOpen}
-          onCopy={onCopy}
-          onReveal={onReveal}
-          onOpenExternal={onOpenExternal}
-          onDelete={onDelete}
-          onToggleFavorite={onToggleFavorite}
-        />
-      ))}
+    <div ref={containerRef} className="relative" style={{ height: totalHeight || undefined }}>
+      {content}
     </div>
   );
 });
