@@ -12,6 +12,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { DEFAULT_SETTINGS, clipflow } from "./lib/bridge";
 import { formatBytes, formatDuration } from "./lib/format";
+import { loadGalleryState, saveGalleryState, type SortKey } from "./lib/galleryState";
 import { PrivacyGateHysteresis, shouldGateForForeground } from "./lib/privacyGate";
 import { playSaveSound } from "./lib/sound";
 import type {
@@ -89,8 +90,6 @@ const TONE_STYLES: Record<ToastTone, string> = {
   info: "border-cyan-300/40 bg-cyan-400/10 text-cyan-100",
 };
 
-type SortKey = "newest" | "oldest" | "largest" | "smallest" | "longest" | "shortest";
-
 export default function App() {
   if (IS_HUD) {
     return <HudOverlay />;
@@ -108,13 +107,15 @@ export default function App() {
   const [flushHistory, setFlushHistory] = useState<number[]>([]);
   const [sessionSaves, setSessionSaves] = useState(0);
   const [sessionBytes, setSessionBytes] = useState(0);
-  const [query, setQuery] = useState("");
-  const [gameFilter, setGameFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("newest");
-  const [audioOnly, setAudioOnly] = useState(false);
-  const [favOnly, setFavOnly] = useState(false);
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [compact, setCompact] = useState(false);
+  // Restore the last gallery view (filter / sort / compact) from localStorage.
+  const [initialGallery] = useState(loadGalleryState);
+  const [query, setQuery] = useState(initialGallery.query);
+  const [gameFilter, setGameFilter] = useState<string>(initialGallery.gameFilter);
+  const [sortKey, setSortKey] = useState<SortKey>(initialGallery.sortKey);
+  const [audioOnly, setAudioOnly] = useState(initialGallery.audioOnly);
+  const [favOnly, setFavOnly] = useState(initialGallery.favOnly);
+  const [tagFilter, setTagFilter] = useState<string | null>(initialGallery.tagFilter);
+  const [compact, setCompact] = useState(initialGallery.compact);
   const [confirmClear, setConfirmClear] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [foreground, setForeground] = useState<ForegroundGame | null>(null);
@@ -898,13 +899,20 @@ export default function App() {
   const armed = stats.state === "buffering" || stats.state === "flushing";
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // A persisted game/tag filter may point at a game or tag that no longer
+    // exists (renamed exe, clips deleted) — fall back so the library never
+    // looks mysteriously empty after a restart.
+    const activeGameFilter =
+      gameFilter === "all" || clips.some((c) => c.game === gameFilter) ? gameFilter : "all";
+    const activeTagFilter =
+      tagFilter && clips.some((c) => c.tags.includes(tagFilter)) ? tagFilter : null;
     const list = clips.filter((c) => {
       const matchesQuery =
         !q || c.title.toLowerCase().includes(q) || c.file_name.toLowerCase().includes(q);
       const matchesAudio = !audioOnly || c.has_audio;
-      const matchesGame = gameFilter === "all" || c.game === gameFilter;
+      const matchesGame = activeGameFilter === "all" || c.game === activeGameFilter;
       const matchesFav = !favOnly || c.favorite;
-      const matchesTag = !tagFilter || c.tags.includes(tagFilter);
+      const matchesTag = !activeTagFilter || c.tags.includes(activeTagFilter);
       return matchesQuery && matchesAudio && matchesGame && matchesFav && matchesTag;
     });
     const sorted = [...list];
@@ -985,6 +993,12 @@ export default function App() {
       best: Math.min(...h),
     };
   }, [flushHistory]);
+
+  // Persist the gallery view whenever any filter / sort / compact option
+  // changes, so reopening the app lands exactly where the user left it.
+  useEffect(() => {
+    saveGalleryState({ query, gameFilter, sortKey, audioOnly, favOnly, tagFilter, compact });
+  }, [query, gameFilter, sortKey, audioOnly, favOnly, tagFilter, compact]);
 
   return (
     <div className="bg-aurora relative flex h-screen w-screen flex-col overflow-hidden bg-[#05060d]">
