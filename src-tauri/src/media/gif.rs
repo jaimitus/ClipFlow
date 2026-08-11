@@ -22,6 +22,10 @@ pub struct GifStats {
     pub frame_count: u32,
     pub width: u32,
     pub height: u32,
+    /// The frame rate the GIF actually plays at (100 / rounded delay).
+    pub fps_actual: f32,
+    /// Real play duration in seconds (`frame_count * delay / 100`).
+    pub duration_seconds: f32,
     pub elapsed_ms: f32,
 }
 
@@ -89,6 +93,180 @@ pub fn bgra_to_rgb(src: &[u8]) -> Vec<u8> {
         i += 4;
     }
     out
+}
+
+/// Bilinear downscale of an RGB24 buffer. Unlike nearest-neighbour, gradients
+/// stay smooth instead of aliasing into hard steps — the single biggest visual
+/// quality win for a palette-limited GIF.
+///
+/// Pure and deterministic (fixed-point source coordinate stepping), so the
+/// pixel math is unit-testable on any platform.
+pub fn resize_bilinear_rgb(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Vec<u8> {
+    if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
+        return Vec::new();
+    }
+    if src.len() < (src_w * src_h * 3) as usize {
+        return Vec::new(); // truncated source — nothing sane to sample
+    }
+    if src_w == dst_w && src_h == dst_h {
+        return src.to_vec();
+    }
+    let mut out = vec![0u8; (dst_w * dst_h * 3) as usize];
+    let sstride = (src_w * 3) as usize;
+    for y in 0..dst_h {
+        // Map the output pixel centre back into source space.
+        let sy = ((y as f32 + 0.5) * src_h as f32 / dst_h as f32) - 0.5;
+        let y0 = sy.floor().max(0.0) as usize;
+        let y1 = (y0 + 1).min(src_h as usize - 1);
+        let fy = (sy - sy.floor()).max(0.0);
+        for x in 0..dst_w {
+            let sx = ((x as f32 + 0.5) * src_w as f32 / dst_w as f32) - 0.5;
+            let x0 = sx.floor().max(0.0) as usize;
+            let x1 = (x0 + 1).min(src_w as usize - 1);
+            let fx = (sx - sx.floor()).max(0.0);
+
+            for c in 0..3 {
+                let a = src[y0 * sstride + x0 * 3 + c] as f32;
+                let b = src[y0 * sstride + x1 * 3 + c] as f32;
+                let c_ = src[y1 * sstride + x0 * 3 + c] as f32;
+                let d = src[y1 * sstride + x1 * 3 + c] as f32;
+                let top = a + (b - a) * fx;
+                let bot = c_ + (d - c_) * fx;
+                out[((y * dst_w + x) * 3 + c as u32) as usize] = (top + (bot - top) * fy).round() as u8;
+            }
+        }
+    }
+    out
+}
+
+/// Core Floyd-Steinberg loop with an injectable nearest-palette lookup.
+/// `nearest(r, g, b)` returns a palette index for the given colour (which may
+/// sit outside [0, 255] because error diffusion overshoots — callers clamp).
+/// Pure and deterministic (row-major scan).
+#[cfg(any(test, all(windows, not(feature = "headless-sim"))))]
+fn dither_fs_core(
+    frame: &[u8],
+    w: u32,
+    h: u32,
+    colors: &[[f32; 3]],
+    mut nearest: impl FnMut(f32, f32, f32) -> usize,
+) -> Vec<u8> {
+    if w == 0 || h == 0 || colors.is_empty() {
+        return Vec::new();
+    }
+    if frame.len() < (w * h * 3) as usize {
+        return Vec::new(); // truncated source — nothing sane to quantise
+    }
+    // Working buffer in f32 so error diffusion accumulates precisely.
+    let mut buf: Vec<f32> = frame.iter().map(|&b| b as f32).collect();
+    let mut out = vec![0u8; (w * h) as usize];
+    let stride = w as usize;
+    // Floyd-Steinberg weights: right 7/16, down-left 3/16, down 5/16,
+    // down-right 1/16.
+    let add = |buf: &mut [f32], i: usize, dr: f32, dg: f32, db: f32, w: f32| {
+        buf[i] += dr * w;
+        buf[i + 1] += dg * w;
+        buf[i + 2] += db * w;
+    };
+
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let i = y * stride + x;
+            let r = buf[i * 3].clamp(0.0, 255.0);
+            let g = buf[i * 3 + 1].clamp(0.0, 255.0);
+            let b = buf[i * 3 + 2].clamp(0.0, 255.0);
+            // Both bundled lookups stay in range, but clamp so a future
+            // caller can't index `colors` out of bounds.
+            let idx = nearest(r, g, b).min(colors.len() - 1);
+            out[i] = idx as u8;
+            let p = colors[idx];
+            let (er, eg, eb) = (r - p[0], g - p[1], b - p[2]);
+            if x + 1 < stride {
+                add(&mut buf, i * 3 + 3, er, eg, eb, 7.0 / 16.0);
+            }
+            if y + 1 < h as usize {
+                let down = i * 3 + stride * 3;
+                add(&mut buf, down, er, eg, eb, 5.0 / 16.0);
+                if x > 0 {
+                    add(&mut buf, down - 3, er, eg, eb, 3.0 / 16.0);
+                }
+                if x + 1 < stride {
+                    add(&mut buf, down + 3, er, eg, eb, 1.0 / 16.0);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Maps an RGB24 frame onto a palette with Floyd-Steinberg error diffusion.
+/// The quantisation error of each pixel is pushed onto its neighbours, which
+/// eliminates the banding a plain nearest-index lookup produces on gradients
+/// — the other half of GIF quality. Uses a simple linear palette scan as the
+/// nearest lookup so the whole function stays dependency-free and testable;
+/// the Windows exporter swaps in NeuQuant's O(1) lookup via [`dither_fs_quant`].
+/// Test-only: the shipped binary always uses the NeuQuant lookup.
+#[cfg(test)]
+pub fn dither_fs_rgb(frame: &[u8], w: u32, h: u32, palette: &[u8]) -> Vec<u8> {
+    if w == 0 || h == 0 || palette.len() < 3 {
+        return Vec::new();
+    }
+    let colors: Vec<[f32; 3]> = palette
+        .chunks_exact(3)
+        .take(256)
+        .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
+        .collect();
+    dither_fs_core(frame, w, h, &colors, |r, g, b| {
+        let mut best = 0usize;
+        let mut best_d = f32::MAX;
+        for (i, p) in colors.iter().enumerate() {
+            let dr = r - p[0];
+            let dg = g - p[1];
+            let db = b - p[2];
+            let d = dr * dr + dg * dg + db * db;
+            if d < best_d {
+                best_d = d;
+                best = i;
+            }
+        }
+        best
+    })
+}
+
+/// Windows-only: error diffusion whose nearest lookup is NeuQuant's O(1)
+/// index cube instead of the linear 256-colour scan — keeps export fast at
+/// 720 px while still killing banding.
+#[cfg(all(windows, not(feature = "headless-sim")))]
+pub fn dither_fs_quant(
+    frame: &[u8],
+    w: u32,
+    h: u32,
+    palette: &[u8],
+    quant: &color_quant::NeuQuant,
+) -> Vec<u8> {
+    if w == 0 || h == 0 || palette.len() < 3 {
+        return Vec::new();
+    }
+    let colors: Vec<[f32; 3]> = palette
+        .chunks_exact(3)
+        .take(256)
+        .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
+        .collect();
+    dither_fs_core(frame, w, h, &colors, |r, g, b| {
+        let rgba = [
+            r.clamp(0.0, 255.0) as u8,
+            g.clamp(0.0, 255.0) as u8,
+            b.clamp(0.0, 255.0) as u8,
+            255,
+        ];
+        quant.index_of(&rgba) as usize
+    })
 }
 
 /// A free `<stem>_gif.gif` next to the source (bumps `_gif2`, `_gif3`, … so an
@@ -222,7 +400,7 @@ mod imp {
         let src = std::slice::from_raw_parts(ptr, len as usize);
         let out = if (w * h * 4) as usize <= src.len() {
             let rgb = bgra_to_rgb(src);
-            Some(resize_nearest_rgb(&rgb, w, h, out_w, out_h))
+            Some(resize_bilinear_rgb(&rgb, w, h, out_w, out_h))
         } else {
             None
         };
@@ -343,7 +521,10 @@ mod imp {
                     "no decodable frames in the selection".into(),
                 ));
             }
-            let quant = color_quant::NeuQuant::new(10, 256, &pool);
+            // Sample every 4th pixel instead of every 10th: a finer palette
+            // sample is noticeably better on gradients at a trivial cost for
+            // short highlights.
+            let quant = color_quant::NeuQuant::new(4, 256, &pool);
             let palette = quant.color_map_rgb();
             drop(pool);
 
@@ -372,10 +553,12 @@ mod imp {
                 out_w,
                 out_h,
                 &mut |frame| {
-                    // color_quant's index lookup wants RGBA input; frames are RGB.
-                    for (i, px) in frame.chunks_exact(3).enumerate() {
-                        indices[i] = quant.index_of(&[px[0], px[1], px[2], 255]) as u8;
-                    }
+                    // Floyd-Steinberg dithering onto the shared palette: kills
+                    // the banding plain nearest-index mapping leaves behind.
+                    // NeuQuant's O(1) index cube keeps the diffusion cheap even
+                    // at 720 px (the linear 256-colour scan is only for the
+                    // dependency-free `dither_fs_rgb` used in tests).
+                    indices = dither_fs_quant(&frame, out_w, out_h, &palette, &quant);
                     let mut gf = gif::Frame::from_palette_pixels(
                         out_w as u16,
                         out_h as u16,
@@ -405,6 +588,8 @@ mod imp {
                 frame_count: written,
                 width: out_w,
                 height: out_h,
+                fps_actual: 100.0 / delay as f32,
+                duration_seconds: written as f32 * delay as f32 / 100.0,
                 elapsed_ms: t0.elapsed().as_secs_f32() * 1000.0,
             })
         }
@@ -541,6 +726,84 @@ mod tests {
         let bgra: Vec<u8> = vec![10, 20, 30, 255, 40, 50, 60, 255];
         let rgb = bgra_to_rgb(&bgra);
         assert_eq!(rgb, vec![30, 20, 10, 60, 50, 40]);
+    }
+
+    #[test]
+    fn resize_bilinear_identity_is_a_copy() {
+        let src: Vec<u8> = (0..(4 * 4 * 3)).map(|i| (i % 251) as u8).collect();
+        let out = resize_bilinear_rgb(&src, 4, 4, 4, 4);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn resize_bilinear_downscales_to_requested_dims() {
+        // 4x4 solid-red block downscaled 2x stays solid red (no smearing).
+        let src: Vec<u8> = (0..(4 * 4 * 3)).map(|i| if i % 3 == 0 { 255 } else { 0 }).collect();
+        let out = resize_bilinear_rgb(&src, 4, 4, 2, 2);
+        assert_eq!(out.len(), 2 * 2 * 3);
+        for px in out.chunks_exact(3) {
+            assert_eq!(px, &[255, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn resize_bilinear_blends_a_horizontal_gradient() {
+        // Left column pure red, right column pure green: the middle output
+        // column must be a blend, not a hard step.
+        let mut src = vec![0u8; 4 * 2 * 3];
+        for y in 0..2 {
+            for c in 0..3 {
+                src[(y * 4 + 0) * 3 + c] = 0; // left
+                src[(y * 4 + 1) * 3 + c] = 0;
+                src[(y * 4 + 2) * 3 + c] = 0;
+                src[(y * 4 + 3) * 3 + c] = 0;
+            }
+            src[(y * 4 + 0) * 3 + 0] = 255;
+            src[(y * 4 + 1) * 3 + 0] = 255;
+            src[(y * 4 + 3) * 3 + 1] = 255;
+            src[(y * 4 + 2) * 3 + 1] = 255;
+        }
+        // 4 wide -> 3 wide; pixel 1 (middle) must sit between red and green.
+        let out = resize_bilinear_rgb(&src, 4, 2, 3, 2);
+        let mid = &out[(0 * 3 + 1) * 3..(0 * 3 + 1) * 3 + 3];
+        // Exact blend depends on coordinate mapping; assert it is neither
+        // pure red nor pure green (i.e. a real interpolation happened).
+        assert!(mid[0] > 0 && mid[0] < 255, "mid red = {} should be blended", mid[0]);
+        assert!(mid[1] > 0 && mid[1] < 255, "mid green = {} should be blended", mid[1]);
+    }
+
+    #[test]
+    fn resize_bilinear_handles_empty_input() {
+        assert!(resize_bilinear_rgb(&[], 4, 4, 2, 2).is_empty());
+        assert!(resize_bilinear_rgb(&[0u8; 48], 4, 4, 0, 2).is_empty());
+    }
+
+    #[test]
+    fn dither_fs_maps_a_flat_color_to_its_palette_entry() {
+        // A 2-color palette where pixel values exactly match an entry: the
+        // output index must be that entry (zero error diffusion).
+        let palette: Vec<u8> = vec![255, 0, 0, 0, 255, 0]; // red, green
+        let frame: Vec<u8> = (0..(2 * 2 * 3)).map(|i| if i % 3 == 0 { 255 } else { 0 }).collect();
+        let out = dither_fs_rgb(&frame, 2, 2, &palette);
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().all(|&i| i == 0)); // every pixel resolves to red
+    }
+
+    #[test]
+    fn dither_fs_stays_within_palette_bounds() {
+        // Random-ish noise on a small palette: every index must be < palette
+        // entry count and the buffer length must be w*h.
+        let palette: Vec<u8> = (0..(8 * 3)).map(|i| (i * 37 % 256) as u8).collect();
+        let frame: Vec<u8> = (0..(4 * 3 * 3)).map(|i| (i * 91 % 256) as u8).collect();
+        let out = dither_fs_rgb(&frame, 4, 3, &palette);
+        assert_eq!(out.len(), 12);
+        assert!(out.iter().all(|&i| (i as usize) < 8));
+    }
+
+    #[test]
+    fn dither_fs_handles_empty_input() {
+        assert!(dither_fs_rgb(&[], 4, 4, &[0u8; 6]).is_empty());
+        assert!(dither_fs_rgb(&[0u8; 48], 4, 4, &[]).is_empty());
     }
 
     #[test]

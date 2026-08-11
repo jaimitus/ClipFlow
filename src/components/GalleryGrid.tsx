@@ -1,9 +1,30 @@
-import { memo, useCallback, useRef, useState } from "react";
-import { assetUrl } from "../lib/bridge";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { assetUrl, clipflow } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { formatBytes, formatDuration, formatRelativeTime } from "../lib/format";
 import { cn } from "../utils/cn";
 import { gapFor, useVirtualGrid } from "../hooks/useVirtualGrid";
+
+/**
+ * Shared thumbnail cache keyed by clip path. The gallery scan returns clips
+ * WITHOUT thumbnails (the native probe cache keeps it instant at thousands of
+ * clips); each visible card decodes its own thumbnail lazily via
+ * `get_clip_thumbnail` and caches it here so re-scans / re-mounts are free.
+ */
+const thumbCache = new Map<string, string>();
+
+/** LRU cap so scrolling through thousands of clips can't balloon memory. */
+const THUMB_CACHE_MAX = 400;
+function cacheThumb(path: string, t: string) {
+  // Map preserves insertion order — re-inserting refreshes recency, and the
+  // oldest entry is evicted first when the budget is exceeded.
+  if (thumbCache.has(path)) thumbCache.delete(path);
+  thumbCache.set(path, t);
+  if (thumbCache.size > THUMB_CACHE_MAX) {
+    const oldest = thumbCache.keys().next().value;
+    if (oldest !== undefined) thumbCache.delete(oldest);
+  }
+}
 
 interface Props {
   clips: ClipMetadata[];
@@ -91,7 +112,35 @@ const ClipCard = memo(function ClipCard({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [hovering, setHovering] = useState(false);
+  const [thumb, setThumb] = useState(clip.thumbnail);
   const src = clip.preview_url ?? assetUrl(clip.path);
+
+  // Lazy thumbnail: the card only mounts when it is (near) visible thanks to
+  // the virtualised grid, so requesting here means thumbnails decode on scroll
+  // — never thousands up front. Cached per path so re-scans are free.
+  useEffect(() => {
+    if (clip.thumbnail) {
+      setThumb(clip.thumbnail);
+      return;
+    }
+    const cached = thumbCache.get(clip.path);
+    if (cached) {
+      setThumb(cached);
+      return;
+    }
+    let alive = true;
+    void clipflow
+      .getClipThumbnail(clip.path, 1)
+      .then((t) => {
+        if (!alive || !t) return;
+        cacheThumb(clip.path, t);
+        setThumb(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [clip.path, clip.thumbnail]);
 
   // Stable handlers: the hover closures are re-created once instead of every render.
   const handleMouseEnter = useCallback(() => {
@@ -133,9 +182,9 @@ const ClipCard = memo(function ClipCard({
       onMouseLeave={handleMouseLeave}
     >
       <div className="relative aspect-video w-full overflow-hidden bg-black">
-        {clip.thumbnail ? (
+        {thumb ? (
           <img
-            src={clip.thumbnail}
+            src={thumb}
             alt={clip.title}
             loading="lazy"
             decoding="async"
@@ -146,8 +195,8 @@ const ClipCard = memo(function ClipCard({
           />
         ) : (
           <div className="bg-grid absolute inset-0 grid place-items-center bg-[#080b16]">
-            <span className="font-mono text-[10px] tracking-[0.2em] text-slate-600">
-              NO THUMBNAIL
+            <span className="animate-pulse font-mono text-[10px] tracking-[0.2em] text-slate-600">
+              LOADING THUMBNAIL…
             </span>
           </div>
         )}

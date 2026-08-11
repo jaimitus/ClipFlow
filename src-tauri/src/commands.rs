@@ -361,6 +361,10 @@ pub struct GifExportResult {
     pub width: u32,
     pub height: u32,
     pub frame_count: u32,
+    /// The frame rate the GIF actually plays at (100 / rounded delay).
+    pub fps: f32,
+    /// Real play duration in seconds (`frame_count * delay / 100`).
+    pub duration_seconds: f32,
     pub size_bytes: u64,
     pub elapsed_ms: f32,
 }
@@ -404,6 +408,8 @@ pub async fn export_clip_gif(
             width: stats.width,
             height: stats.height,
             frame_count: stats.frame_count,
+            fps: stats.fps_actual,
+            duration_seconds: stats.duration_seconds,
             size_bytes,
             elapsed_ms: stats.elapsed_ms,
         })
@@ -887,7 +893,9 @@ pub fn update_settings(
         if let Some(hud) = app.get_webview_window("hud") {
             if v {
                 let _ = hud.show();
+                let _ = set_window_excluded_from_capture(&hud, true);
             } else {
+                let _ = set_window_excluded_from_capture(&hud, false);
                 let _ = hud.hide();
             }
         }
@@ -933,9 +941,45 @@ pub fn get_power_state() -> Result<crate::power::PowerState, String> {
     crate::power::read_power_state()
 }
 
+/// Marks a window so Windows removes it from *every* capture path — DXGI
+/// Desktop Duplication (what the engine records with), Windows Graphics
+/// Capture, PrintWindow, BitBlt… The HUD floats above games while armed, and
+/// without this flag it would be baked into every clip. `exclude = true` sets
+/// WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+), `false` restores WDA_NONE.
+/// Best-effort: on pre-2004 builds the flag is unsupported and ignored.
+#[cfg(windows)]
+fn set_window_excluded_from_capture(
+    window: &tauri::WebviewWindow,
+    exclude: bool,
+) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND as WinHwnd;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let flag = if exclude {
+        WDA_EXCLUDEFROMCAPTURE
+    } else {
+        WDA_NONE
+    };
+    unsafe {
+        SetWindowDisplayAffinity(WinHwnd(hwnd.0 as *mut _), flag)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(not(windows))]
+fn set_window_excluded_from_capture(
+    _window: &tauri::WebviewWindow,
+    _exclude: bool,
+) -> Result<(), String> {
+    Ok(())
+}
+
 /// Shows / hides the always-on-top recording HUD window. While showing, it is
 /// anchored to the bottom-right corner of the main deck window (the HUD has no
-/// chrome and ignores cursor events, so it never steals focus or clicks).
+/// chrome and ignores cursor events, so it never steals focus or clicks) and
+/// is excluded from screen capture so it never appears in recorded clips.
 #[tauri::command]
 pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     const HUD_W: i32 = 190;
@@ -944,6 +988,8 @@ pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
         return Ok(());
     };
     if !visible {
+        // Remove the capture exclusion first (restore WDA_NONE), then hide.
+        let _ = set_window_excluded_from_capture(&hud, false);
         let _ = hud.hide();
         return Ok(());
     }
@@ -958,6 +1004,8 @@ pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let _ = hud.set_ignore_cursor_events(true);
     let _ = hud.set_always_on_top(true);
     let _ = hud.show();
+    // From the moment it is visible it must be invisible to capture.
+    let _ = set_window_excluded_from_capture(&hud, true);
     Ok(())
 }
 

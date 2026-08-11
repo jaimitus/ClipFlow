@@ -48,6 +48,9 @@ const PRIVACY_HYSTERESIS_MS = 5000;
  */
 const ECO_HYSTERESIS_MS = 6000;
 
+/** How long an injected ECO simulation lasts before it expires on its own. */
+const ECO_SIM_DURATION_MS = 30_000;
+
 /** The dedicated HUD window loads the same bundle with ?hud=1. */
 const IS_HUD =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hud");
@@ -139,6 +142,17 @@ export default function App() {
     active: boolean;
     reason: "battery" | "ram" | "off";
   } | null>(null);
+  // Live battery/RAM snapshot for the Settings telemetry row — polled even
+  // when ECO is off so the panel always shows what the machine is doing.
+  const [powerNow, setPowerNow] = useState<PowerState | null>(null);
+  // ECO simulation (desktop testing): injects a fake battery/RAM state for
+  // SIM_DURATION_MS so the whole ECO loop is verifiable without a laptop.
+  const [ecoSim, setEcoSim] = useState<"battery" | "ram" | null>(null);
+  const ecoSimUntil = useRef(0);
+  // Mirrors `ecoSim` for the poll interval without re-subscribing it — set in
+  // `simulateEco` (never during render, so StrictMode double-render can't
+  // clobber a just-started simulation).
+  const ecoSimRef = useRef<"battery" | "ram" | null>(null);
   const [onboarding, setOnboarding] = useState<boolean>(() => {
     try {
       return localStorage.getItem("clipflow.onboarding.seen") !== "1";
@@ -194,7 +208,9 @@ export default function App() {
 
   const refreshClips = useCallback(async () => {
     try {
-      const list = await clipflow.getClips(true);
+      // Metadata only: the native probe cache makes this O(files) of stats;
+      // thumbnails are decoded lazily per visible card (see GalleryGrid).
+      const list = await clipflow.getClips(false);
       setClips(list);
     } catch (e) {
       pushToast("err", "Could not read clips folder", String(e));
@@ -633,11 +649,11 @@ export default function App() {
     };
   }, [pushToast]);
 
-  // Adaptive capture (ECO): polls the battery/RAM snapshot every 5 s. Once the
+  // Adaptive capture (ECO): polls the battery/RAM snapshot every 5 s — always,
+  // so the Settings telemetry row stays live even while ECO is off. Once the
   // ECO state has been stable for a few seconds, the rolling buffer shrinks to
   // 30 s on the LIVE engine (never touching the persisted setting) and restores
-  // itself when conditions clear. Runs the whole time so enabling ECO reacts
-  // within a poll — no settings-dependency juggling.
+  // itself when conditions clear.
   const ecoHysteresis = useRef<EcoHysteresis | null>(null);
   if (ecoHysteresis.current === null) {
     ecoHysteresis.current = new EcoHysteresis(ECO_HYSTERESIS_MS);
@@ -647,6 +663,50 @@ export default function App() {
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
+      let power: PowerState;
+      try {
+        power = await clipflow.getPowerState();
+      } catch {
+        return; // telemetry unavailable — try again next poll
+      }
+      if (cancelled) return;
+      // Live telemetry for the Settings row (object identity preserved when the
+      // snapshot is unchanged so the panel skips re-renders on every poll).
+      setPowerNow((prev) =>
+        prev &&
+        prev.onBattery === power.onBattery &&
+        prev.batteryPercent === power.batteryPercent &&
+        prev.availableRamBytes === power.availableRamBytes &&
+        prev.totalRamBytes === power.totalRamBytes
+          ? prev
+          : power,
+      );
+      // Desktop testing: an injected simulation shadows the real snapshot
+      // until it expires on its own.
+      const sim = ecoSimRef.current;
+      if (sim && Date.now() >= ecoSimUntil.current) {
+        ecoSimUntil.current = 0;
+        ecoSimRef.current = null;
+        setEcoSim(null);
+      }
+      const activeSim = sim && Date.now() < ecoSimUntil.current ? sim : null;
+      if (activeSim) {
+        power =
+          activeSim === "battery"
+            ? {
+                onBattery: true,
+                batteryPercent: 15,
+                availableRamBytes: power.availableRamBytes,
+                totalRamBytes: power.totalRamBytes,
+              }
+            : {
+                onBattery: false,
+                batteryPercent: 100,
+                // 1.5 GiB free — well under the default 4 GiB threshold.
+                availableRamBytes: 1.5 * 1024 * 1024 * 1024,
+                totalRamBytes: power.totalRamBytes,
+              };
+      }
       if (!settingsRef.current.adaptiveEco) {
         // ECO off: restore any shrunk buffer right away, then idle.
         if (ecoAppliedBuffer.current !== null) {
@@ -656,13 +716,6 @@ export default function App() {
         setEcoState(null);
         return;
       }
-      let power: PowerState;
-      try {
-        power = await clipflow.getPowerState();
-      } catch {
-        return; // telemetry unavailable — try again next poll
-      }
-      if (cancelled) return;
       const s = settingsRef.current;
       const decision = decideEco(power, s);
       // Keep the object identity when nothing changed so the deck skips re-renders.
@@ -701,6 +754,25 @@ export default function App() {
       cancelled = true;
       window.clearInterval(iv);
     };
+  }, [pushToast]);
+
+  /** Injects a fake battery/RAM state for ECO_SIM_DURATION_MS (desktop testing). */
+  const simulateEco = useCallback((kind: "battery" | "ram" | null) => {
+    if (kind) {
+      ecoSimUntil.current = Date.now() + ECO_SIM_DURATION_MS;
+      ecoSimRef.current = kind;
+      setEcoSim(kind);
+      pushToast(
+        "info",
+        kind === "battery" ? "Simulating battery 15%" : "Simulating low RAM (1.5 GiB)",
+        "ECO will engage at the next poll — watch the buffer shrink.",
+      );
+    } else {
+      ecoSimUntil.current = 0;
+      ecoSimRef.current = null;
+      setEcoSim(null);
+      pushToast("info", "ECO simulation stopped");
+    }
   }, [pushToast]);
 
   const checkForUpdates = useCallback(async () => {
@@ -962,9 +1034,9 @@ export default function App() {
         pushToast(
           "ok",
           "GIF exported",
-          `${r.file_name} · ${r.width}×${r.height} · ${r.frame_count} frames · ${formatBytes(
-            r.size_bytes,
-          )}`,
+          `${r.file_name} · ${r.width}×${r.height} @ ${r.fps.toFixed(1)} fps · ${formatDuration(
+            r.duration_seconds,
+          )} · ${r.frame_count} frames · ${formatBytes(r.size_bytes)}`,
         );
       } catch (e) {
         pushToast("err", "GIF export failed", String(e));
@@ -1282,6 +1354,7 @@ export default function App() {
               hotkey={settings.hotkeySave}
               busy={busy}
               eco={ecoState}
+              ecoSim={ecoSim}
               onToggle={handleToggle}
               onSave={() => void handleSave()}
             />
@@ -1715,6 +1788,9 @@ export default function App() {
                 monitors={monitors}
                 version={APP_VERSION}
                 native={native}
+                power={powerNow}
+                ecoSim={ecoSim}
+                onSimulateEco={(kind) => simulateEco(kind)}
                 onChange={(p) => void patchSettings(p)}
                 onRestartEngine={() => void restartEngine()}
                 onOpenFolder={() => void clipflow.openOutputFolder()}

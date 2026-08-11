@@ -100,6 +100,10 @@ export interface GifExportResult {
   width: number;
   height: number;
   frame_count: number;
+  /** The frame rate the GIF actually plays at (100 / rounded delay). */
+  fps: number;
+  /** Real play duration in seconds (`frame_count * delay / 100`). */
+  duration_seconds: number;
   size_bytes: number;
   elapsed_ms: number;
 }

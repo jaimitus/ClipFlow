@@ -56,8 +56,21 @@ pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMeta
         std::fs::create_dir_all(dir)?;
         return Ok(Vec::new());
     }
+    let mut cache = ProbeCache::load();
     let mut clips = Vec::new();
-    scan_into(dir, dir, 0, with_thumbnails, &mut clips)?;
+    let mut dirty = false;
+    let mut seen = std::collections::HashSet::new();
+    scan_into(dir, dir, 0, with_thumbnails, &mut clips, &mut cache, &mut seen, &mut dirty)?;
+    // Drop cache entries for clips that no longer exist (deleted or moved) so
+    // the cache file never grows without bound across hundreds of sessions.
+    let before = cache.entries.len();
+    cache.entries.retain(|k, _| seen.contains(k));
+    if cache.entries.len() != before {
+        dirty = true;
+    }
+    if dirty {
+        cache.save();
+    }
     clips.sort_by(|a, b| b.created_unix_ms.cmp(&a.created_unix_ms));
     Ok(clips)
 }
@@ -71,6 +84,9 @@ fn scan_into(
     depth: u32,
     with_thumbnails: bool,
     out: &mut Vec<ClipMetadata>,
+    cache: &mut ProbeCache,
+    seen: &mut std::collections::HashSet<String>,
+    dirty: &mut bool,
 ) -> RResult<()> {
     for entry in std::fs::read_dir(dir)? {
         let Ok(entry) = entry else { continue };
@@ -78,7 +94,7 @@ fn scan_into(
         let Ok(file_type) = entry.file_type() else { continue };
         if file_type.is_dir() {
             if depth < 2 {
-                scan_into(root, &path, depth + 1, with_thumbnails, out)?;
+                scan_into(root, &path, depth + 1, with_thumbnails, out, cache, seen, dirty)?;
             }
             continue;
         }
@@ -108,7 +124,29 @@ fn scan_into(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let probe = probe(&path).unwrap_or_default();
+        // Probe cache hit (size + mtime unchanged) skips the MF open entirely.
+        let key = path.to_string_lossy().to_string();
+        seen.insert(key.clone());
+        let mod_ms = modified_ms(&meta);
+        let size = meta.len();
+        let probe = match cache.entries.get(&key) {
+            Some(c) if c.size_bytes == size && c.modified_ms == mod_ms && mod_ms != 0 => {
+                c.probe.clone()
+            }
+            _ => {
+                let p = probe(&path).unwrap_or_default();
+                cache.entries.insert(
+                    key.clone(),
+                    CachedProbe {
+                        size_bytes: size,
+                        modified_ms: mod_ms,
+                        probe: p.clone(),
+                    },
+                );
+                *dirty = true;
+                p
+            }
+        };
         let thumbnail = if with_thumbnails {
             extract_thumbnail(&path, (probe.duration_seconds * 0.25).clamp(0.2, 8.0)).ok()
         } else {
@@ -121,7 +159,7 @@ fn scan_into(
             .and_then(|p| p.strip_prefix(root).ok())
             .filter(|rel| !rel.as_os_str().is_empty())
             .map(|rel| rel.to_string_lossy().to_string());
-        let id_key = path.to_string_lossy().to_string();
+        let id_key = key.clone();
 
         out.push(ClipMetadata {
             id: format!("{:x}", fnv1a(id_key.as_bytes()) ^ created_unix_ms as u64),
@@ -165,13 +203,80 @@ fn pretty_title(file_name: &str) -> String {
         .replace('_', " ")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeResult {
     pub duration_seconds: f32,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
     pub has_audio: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Persistent probe cache
+// ---------------------------------------------------------------------------
+//
+// Probing a clip opens a Media Foundation source reader (tens of ms per file).
+// With thousands of clips the gallery scan would take minutes on every launch.
+// The cache keyed on (size, mtime) makes rescanning O(files) of stat calls and
+// only re-probes clips that actually changed on disk. The file lives in AppData
+// next to `clip_meta.json`, never inside the user's clips folder.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedProbe {
+    size_bytes: u64,
+    modified_ms: i64,
+    probe: ProbeResult,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ProbeCache {
+    entries: std::collections::HashMap<String, CachedProbe>,
+}
+
+impl ProbeCache {
+    fn path() -> PathBuf {
+        #[cfg(windows)]
+        {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                return PathBuf::from(appdata).join("ClipFlow").join("probe_cache.json");
+            }
+        }
+        std::env::temp_dir().join("ClipFlow").join("probe_cache.json")
+    }
+
+    fn load() -> Self {
+        std::fs::read_to_string(Self::path())
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) {
+        let Ok(json) = serde_json::to_string(self) else {
+            return;
+        };
+        let path = Self::path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // Atomic-ish write: a crash mid-write must never leave a truncated
+        // cache behind (the next launch would just fall back to re-probing).
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, &json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Modified-time in ms, or 0 when the FS cannot report it (forces a re-probe,
+/// which is always correct, just slower).
+fn modified_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl Default for ProbeResult {

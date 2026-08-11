@@ -243,6 +243,19 @@ export const clipflow = {
     return simEngine.list();
   },
 
+  /**
+   * Decodes one clip's thumbnail on demand (hardware decode in Rust). The
+   * gallery calls this lazily per visible card instead of baking every
+   * thumbnail into the initial scan — thousands of clips stay instant.
+   */
+  async getClipThumbnail(path: string, atSeconds = 1): Promise<string | null> {
+    if (isTauri()) {
+      return invoke<string>("get_clip_thumbnail", { path, atSeconds }).catch(() => null);
+    }
+    // Browser sim: thumbnails are already inlined by simEngine.save().
+    return simEngine.find(path)?.thumbnail ?? null;
+  },
+
   /** Splits a clip in two at `atSeconds` (two stream-copy trims, one task). */
   async splitClip(sourcePath: string, atSeconds: number): Promise<SplitResult> {
     if (isTauri()) {

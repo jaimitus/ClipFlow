@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { clipflow } from "../lib/bridge";
-import type { AppSettings, EngineStats, MonitorInfo, UpdateProgress } from "../lib/types";
+import type {
+  AppSettings,
+  EngineStats,
+  MonitorInfo,
+  PowerState,
+  UpdateProgress,
+} from "../lib/types";
 import { formatBytes } from "../lib/format";
 import { cn } from "../utils/cn";
 import { Row, Toggle } from "./ui";
@@ -10,6 +16,12 @@ interface Props {
   stats: EngineStats;
   monitors: MonitorInfo[];
   version: string;
+  /** Live battery/RAM snapshot for the ECO telemetry row (null = not read yet). */
+  power?: PowerState | null;
+  /** An ECO simulation currently running (desktop testing). */
+  ecoSim?: "battery" | "ram" | null;
+  /** Starts / stops an ECO simulation from the panel. */
+  onSimulateEco?: (kind: "battery" | "ram" | null) => void;
   onChange: (patch: Partial<AppSettings>) => void;
   onRestartEngine: () => void;
   onOpenFolder: () => void;
@@ -100,6 +112,9 @@ export default function SettingsPanel({
   stats,
   monitors,
   version,
+  power,
+  ecoSim,
+  onSimulateEco,
   onChange,
   onRestartEngine,
   onOpenFolder,
@@ -337,6 +352,53 @@ export default function SettingsPanel({
                 onChange={(e) => onChange({ ecoRamFreeGbs: Number(e.target.value) })}
               />
             </Row>
+
+            {/* Live telemetry + desktop simulation: on a desktop that never
+                leaves AC, the only way to see ECO react is to inject a state. */}
+            <div className="mt-2 rounded-xl border border-white/8 bg-black/30 px-3 py-2.5">
+              <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.14em]">
+                <span className="text-slate-500">LIVE TELEMETRY</span>
+                {power ? (
+                  <span className={cn("font-semibold", power.onBattery ? "text-amber-300" : "text-lime-300")}>
+                    {power.onBattery ? `🔋 BATTERY ${power.batteryPercent}%` : "🔌 AC POWER"}
+                  </span>
+                ) : (
+                  <span className="animate-pulse text-slate-600">READING…</span>
+                )}
+              </div>
+              <div className="mt-1.5 font-mono text-[11px] text-slate-300">
+                {power
+                  ? `${formatBytes(power.availableRamBytes)} free of ${formatBytes(power.totalRamBytes)}`
+                  : "—"}
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() => onSimulateEco?.(ecoSim === "battery" ? null : "battery")}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                    ecoSim === "battery"
+                      ? "border-amber-300/70 bg-amber-400/20 text-amber-100"
+                      : "border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20",
+                  )}
+                >
+                  {ecoSim === "battery" ? "⏹ STOP BATTERY SIM" : "▶ SIMULATE BATTERY 15%"}
+                </button>
+                <button
+                  onClick={() => onSimulateEco?.(ecoSim === "ram" ? null : "ram")}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                    ecoSim === "ram"
+                      ? "border-amber-300/70 bg-amber-400/20 text-amber-100"
+                      : "border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20",
+                  )}
+                >
+                  {ecoSim === "ram" ? "⏹ STOP RAM SIM" : "▶ SIMULATE LOW RAM"}
+                </button>
+                <span className="font-mono text-[9px] tracking-[0.1em] text-slate-600">
+                  {ecoSim ? "30s · AUTO-EXPIRES" : "TEST ON A DESKTOP"}
+                </span>
+              </div>
+            </div>
           </>
         )}
       </section>
