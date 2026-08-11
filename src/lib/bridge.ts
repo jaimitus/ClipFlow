@@ -15,7 +15,9 @@ import type {
   ClipSavedPayload,
   EngineStats,
   ForegroundGame,
+  GifExportResult,
   MonitorInfo,
+  PowerState,
   ProfileMapEntry,
   SplitResult,
   TrimResult,
@@ -170,6 +172,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   privacyPauseWhenUnfocused: false,
   gameVolume: 100,
   micVolume: 100,
+  adaptiveEco: false,
+  ecoBatteryThresholdPct: 30,
+  ecoRamFreeGbs: 4,
 };
 
 let browserSettings: AppSettings = { ...DEFAULT_SETTINGS };
@@ -298,6 +303,63 @@ export const clipflow = {
       return;
     }
     simEngine.delete(path);
+  },
+
+  /** Deletes many clips at once; resolves to how many were removed. */
+  async deleteClips(paths: string[]): Promise<number> {
+    if (isTauri()) return invoke<number>("delete_clips", { paths });
+    let n = 0;
+    for (const p of paths) {
+      simEngine.delete(p);
+      n += 1;
+    }
+    return n;
+  },
+
+  /** Puts several clips on the clipboard as one multi-file drop (batch). */
+  async copyClips(paths: string[]): Promise<void> {
+    if (isTauri()) {
+      await invoke("copy_clips_to_clipboard", { paths });
+      return;
+    }
+    await navigator.clipboard?.writeText(paths.join("\n"));
+  },
+
+  /** Stars / unstars many clips; resolves to how many changed. */
+  async setClipsFavorite(paths: string[], favorite: boolean): Promise<number> {
+    if (isTauri()) return invoke<number>("set_clips_favorite", { paths, favorite });
+    let n = 0;
+    for (const p of paths) {
+      simEngine.setFavorite(p, favorite);
+      n += 1;
+    }
+    return n;
+  },
+
+  /** Adds one tag to many clips; resolves to how many gained it. */
+  async addClipsTag(paths: string[], tag: string): Promise<number> {
+    if (isTauri()) return invoke<number>("add_clips_tag", { paths, tag });
+    let n = 0;
+    for (const p of paths) {
+      const clip = simEngine.find(p);
+      if (!clip || clip.tags.includes(tag)) continue;
+      simEngine.setTags(p, [...clip.tags, tag]);
+      n += 1;
+    }
+    return n;
+  },
+
+  /** Removes one tag from many clips; resolves to how many lost it. */
+  async removeClipsTag(paths: string[], tag: string): Promise<number> {
+    if (isTauri()) return invoke<number>("remove_clips_tag", { paths, tag });
+    let n = 0;
+    for (const p of paths) {
+      const clip = simEngine.find(p);
+      if (!clip || !clip.tags.includes(tag)) continue;
+      simEngine.setTags(p, clip.tags.filter((t) => t !== tag));
+      n += 1;
+    }
+    return n;
   },
 
   /** Removes every clip; resolves to the number deleted. */
@@ -510,6 +572,44 @@ export const clipflow = {
       return;
     }
     simEngine.setFavorite(path, favorite);
+  },
+
+  /**
+   * Battery + RAM snapshot for the adaptive ECO mode. Native: two cheap local
+   * reads. Browser: a steady AC / healthy-RAM snapshot (ECO stays inert).
+   */
+  async getPowerState(): Promise<PowerState> {
+    if (isTauri()) return invoke<PowerState>("get_power_state");
+    return {
+      onBattery: false,
+      batteryPercent: 100,
+      availableRamBytes: 8 * 1024 * 1024 * 1024,
+      totalRamBytes: 16 * 1024 * 1024 * 1024,
+    };
+  },
+
+  /**
+   * Exports the `start..end` selection as an animated GIF next to the source.
+   * Native: MF SourceReader decode + pure-Rust palette GIF. Browser preview:
+   * not supported (no GIF encoder) — throws a clear error.
+   */
+  async exportGif(
+    path: string,
+    startSeconds: number,
+    endSeconds: number,
+    width = 480,
+    fps = 15,
+  ): Promise<GifExportResult> {
+    if (isTauri()) {
+      return invoke<GifExportResult>("export_clip_gif", {
+        sourcePath: path,
+        startSeconds,
+        endSeconds,
+        width,
+        fps,
+      });
+    }
+    throw new Error("GIF export requires the native app");
   },
 
   /** Replaces the custom tags of a clip; persists in the local sidecar store. */

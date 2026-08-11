@@ -8,6 +8,8 @@ interface Props {
   stats: EngineStats;
   hotkey: string;
   busy?: boolean;
+  /** Adaptive capture (ECO) status, when active. */
+  eco?: { active: boolean; reason: "battery" | "ram" | "off" } | null;
   onToggle: () => void;
   onSave: () => void;
 }
@@ -102,7 +104,7 @@ function Metric({
   );
 }
 
-export default function BufferStatusCard({ stats, hotkey, busy, onToggle, onSave }: Props) {
+export default function BufferStatusCard({ stats, hotkey, busy, eco, onToggle, onSave }: Props) {
   const meta = STATE_META[stats.state];
   const accent = VENDOR_ACCENT[stats.encoder.vendor] ?? "#5eeaff";
   const armed = stats.state === "buffering" || stats.state === "flushing";
@@ -155,6 +157,14 @@ export default function BufferStatusCard({ stats, hotkey, busy, onToggle, onSave
         </div>
 
         <div className="flex items-center gap-2">
+          {eco?.active && (
+            <span
+              title="Adaptive capture: the buffer is shrunk while the machine is under pressure"
+              className="rounded-lg border border-lime-400/40 bg-lime-400/10 px-2.5 py-1.5 font-mono text-[10px] font-semibold tracking-[0.14em] text-lime-200"
+            >
+              🌿 ECO {eco.reason === "battery" ? "BATTERY" : "RAM"}
+            </span>
+          )}
           <button
             onClick={onToggle}
             disabled={busy}

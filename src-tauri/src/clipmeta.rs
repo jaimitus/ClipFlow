@@ -32,6 +32,19 @@ struct StoreFile {
 const MAX_TAGS: usize = 12;
 const MAX_TAG_LEN: usize = 24;
 
+/// Shared tag cleaning used by both the single- and batch-tag paths: trim,
+/// drop empties, cap length, dedupe, cap count.
+fn clean_tags(tags: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    tags.into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(MAX_TAG_LEN).collect::<String>())
+        .filter(|t| seen.insert(t.clone()))
+        .take(MAX_TAGS)
+        .collect()
+}
+
 pub struct ClipMetaStore {
     path: PathBuf,
     entries: HashMap<String, ClipMetaEntry>,
@@ -76,21 +89,65 @@ impl ClipMetaStore {
     /// Replaces the tag set of a clip. Tags are trimmed, deduplicated,
     /// length-capped and limited in count, then persisted immediately.
     pub fn set_tags(&mut self, path: &str, tags: Vec<String>) -> Result<ClipMetaEntry, String> {
-        let mut seen = std::collections::HashSet::new();
-        let cleaned: Vec<String> = tags
-            .into_iter()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .map(|t| t.chars().take(MAX_TAG_LEN).collect::<String>())
-            .filter(|t| seen.insert(t.clone()))
-            .take(MAX_TAGS)
-            .collect();
+        let cleaned = clean_tags(tags);
         {
             let entry = self.entries.entry(path.to_string()).or_default();
             entry.tags = cleaned;
         }
         self.save()?;
         Ok(self.entries.get(path).cloned().unwrap_or_default())
+    }
+
+    /// Stars / unstars many clips with a single persist. Returns how many
+    /// entries actually changed value (batch library management).
+    pub fn set_favorite_many(&mut self, paths: &[String], favorite: bool) -> u32 {
+        let mut changed = 0u32;
+        for p in paths {
+            let entry = self.entries.entry(p.clone()).or_default();
+            if entry.favorite != favorite {
+                entry.favorite = favorite;
+                changed += 1;
+            }
+        }
+        let _ = self.save();
+        changed
+    }
+
+    /// Appends one tag to many clips (dedup + caps, single persist). Returns
+    /// how many clips actually gained the tag.
+    pub fn add_tag_many(&mut self, paths: &[String], tag: &str) -> u32 {
+        let cleaned = clean_tags(vec![tag.to_string()]);
+        let Some(tag) = cleaned.into_iter().next() else {
+            return 0;
+        };
+        let mut changed = 0u32;
+        for p in paths {
+            let entry = self.entries.entry(p.clone()).or_default();
+            if entry.tags.len() >= MAX_TAGS || entry.tags.contains(&tag) {
+                continue;
+            }
+            entry.tags.push(tag.clone());
+            changed += 1;
+        }
+        let _ = self.save();
+        changed
+    }
+
+    /// Removes one tag from many clips (single persist). Returns how many
+    /// clips actually lost the tag.
+    pub fn remove_tag_many(&mut self, paths: &[String], tag: &str) -> u32 {
+        let mut changed = 0u32;
+        for p in paths {
+            if let Some(entry) = self.entries.get_mut(p) {
+                let before = entry.tags.len();
+                entry.tags.retain(|t| t != tag);
+                if entry.tags.len() != before {
+                    changed += 1;
+                }
+            }
+        }
+        let _ = self.save();
+        changed
     }
 
     /// Moves an entry to a new key (used when a clip is renamed on disk) so

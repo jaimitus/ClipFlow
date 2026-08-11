@@ -8,6 +8,7 @@ pub mod commands;
 pub mod foreground;
 pub mod hotkeys;
 pub mod media;
+pub mod power;
 pub mod settings;
 
 use std::sync::Arc;
@@ -189,8 +190,14 @@ pub fn run() {
             commands::get_clip_thumbnail,
             commands::trim_clip,
             commands::split_clip,
+            commands::export_clip_gif,
             commands::delete_clip,
+            commands::delete_clips,
             commands::delete_all_clips,
+            commands::copy_clips_to_clipboard,
+            commands::set_clips_favorite,
+            commands::add_clips_tag,
+            commands::remove_clips_tag,
             commands::rename_clip,
             commands::extract_png_frame,
             commands::save_png_snapshot,
@@ -214,6 +221,7 @@ pub fn run() {
             commands::set_clip_tags,
             commands::set_privacy_gate,
             commands::set_hud_visible,
+            commands::get_power_state,
             commands::set_save_hotkey,
             commands::set_toggle_hotkey,
             commands::open_releases_page,

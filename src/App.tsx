@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import BufferStatusCard from "./components/BufferStatusCard";
 import ClipTrimmerModal from "./components/ClipTrimmerModal";
 import GalleryGrid from "./components/GalleryGrid";
@@ -14,6 +14,8 @@ import { DEFAULT_SETTINGS, clipflow } from "./lib/bridge";
 import { formatBytes, formatDuration } from "./lib/format";
 import { loadGalleryState, saveGalleryState, type SortKey } from "./lib/galleryState";
 import { PrivacyGateHysteresis, shouldGateForForeground } from "./lib/privacyGate";
+import { decideEco, EcoHysteresis } from "./lib/powerPolicy";
+import { EMPTY_SELECTION, selectionCount, selectionReducer } from "./lib/selection";
 import { playSaveSound } from "./lib/sound";
 import type {
   AppSettings,
@@ -23,6 +25,7 @@ import type {
   EngineStats,
   ForegroundGame,
   MonitorInfo,
+  PowerState,
   ProfileMapEntry,
   UpdateProgress,
 } from "./lib/types";
@@ -38,6 +41,12 @@ const APP_VERSION = "1.3.1";
  * holds.
  */
 const PRIVACY_HYSTERESIS_MS = 5000;
+
+/**
+ * How long the ECO state must hold before the buffer actually shrinks/restores.
+ * A momentary free-RAM blip must never churn the rolling window or spam toasts.
+ */
+const ECO_HYSTERESIS_MS = 6000;
 
 /** The dedicated HUD window loads the same bundle with ?hud=1. */
 const IS_HUD =
@@ -116,10 +125,20 @@ export default function App() {
   const [favOnly, setFavOnly] = useState(initialGallery.favOnly);
   const [tagFilter, setTagFilter] = useState<string | null>(initialGallery.tagFilter);
   const [compact, setCompact] = useState(initialGallery.compact);
+  // Multi-select (batch management): pure reducer, paths keyed by clip path.
+  const [selection, dispatchSelection] = useReducer(selectionReducer, EMPTY_SELECTION);
+  const [selectMode, setSelectMode] = useState(false);
+  const [confirmDeleteSelection, setConfirmDeleteSelection] = useState(false);
+  const [tagAction, setTagAction] = useState<"add" | "remove" | null>(null);
+  const [tagInput, setTagInput] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [foreground, setForeground] = useState<ForegroundGame | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [ecoState, setEcoState] = useState<{
+    active: boolean;
+    reason: "battery" | "ram" | "off";
+  } | null>(null);
   const [onboarding, setOnboarding] = useState<boolean>(() => {
     try {
       return localStorage.getItem("clipflow.onboarding.seen") !== "1";
@@ -614,6 +633,76 @@ export default function App() {
     };
   }, [pushToast]);
 
+  // Adaptive capture (ECO): polls the battery/RAM snapshot every 5 s. Once the
+  // ECO state has been stable for a few seconds, the rolling buffer shrinks to
+  // 30 s on the LIVE engine (never touching the persisted setting) and restores
+  // itself when conditions clear. Runs the whole time so enabling ECO reacts
+  // within a poll — no settings-dependency juggling.
+  const ecoHysteresis = useRef<EcoHysteresis | null>(null);
+  if (ecoHysteresis.current === null) {
+    ecoHysteresis.current = new EcoHysteresis(ECO_HYSTERESIS_MS);
+  }
+  const ecoAppliedBuffer = useRef<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      if (!settingsRef.current.adaptiveEco) {
+        // ECO off: restore any shrunk buffer right away, then idle.
+        if (ecoAppliedBuffer.current !== null) {
+          ecoAppliedBuffer.current = null;
+          void clipflow.setBufferSeconds(settingsRef.current.bufferSeconds);
+        }
+        setEcoState(null);
+        return;
+      }
+      let power: PowerState;
+      try {
+        power = await clipflow.getPowerState();
+      } catch {
+        return; // telemetry unavailable — try again next poll
+      }
+      if (cancelled) return;
+      const s = settingsRef.current;
+      const decision = decideEco(power, s);
+      // Keep the object identity when nothing changed so the deck skips re-renders.
+      setEcoState((prev) =>
+        prev && prev.active === decision.active && prev.reason === decision.reason
+          ? prev
+          : { active: decision.active, reason: decision.reason },
+      );
+      const flip = ecoHysteresis.current!.tick(decision.active);
+      const target = decision.active ? decision.ecoBufferSeconds : s.bufferSeconds;
+      if (ecoAppliedBuffer.current === target) {
+        if (flip !== null) ecoHysteresis.current!.commit(flip);
+        return;
+      }
+      // Either the state just flipped, or the live buffer drifted from the ECO
+      // target (e.g. the user changed it in Settings while ECO was active) —
+      // re-assert so the chip never lies about what the engine is doing.
+      try {
+        await clipflow.setBufferSeconds(target);
+        ecoAppliedBuffer.current = target;
+        if (flip !== null) ecoHysteresis.current!.commit(flip);
+        pushToast(
+          "info",
+          decision.active ? "ECO mode active" : "ECO mode off",
+          decision.active
+            ? `${decision.reason === "battery" ? "Battery low" : "Low RAM"} — buffer ${decision.ecoBufferSeconds}s, fps cap ${decision.ecoFps}.`
+            : `Full ${s.bufferSeconds}s buffer restored.`,
+        );
+      } catch {
+        // invoke failed — the next poll retries
+      }
+    };
+    void tick();
+    const iv = window.setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(iv);
+    };
+  }, [pushToast]);
+
   const checkForUpdates = useCallback(async () => {
     if (!native) {
       // Browser preview has no updater — fall back to the Releases page.
@@ -694,6 +783,10 @@ export default function App() {
   const openClip = useCallback((clip: ClipMetadata) => {
     setActiveClip(clip);
     setActiveFlushMs(undefined);
+    // Opening a clip ends any in-flight batch selection.
+    dispatchSelection({ type: "clear" });
+    setConfirmDeleteSelection(false);
+    setTagAction(null);
   }, []);
 
   const copyClip = useCallback(
@@ -860,6 +953,28 @@ export default function App() {
     [activeClip, pushToast, refreshClips],
   );
 
+  const exportGif = useCallback(
+    async (start: number, end: number, width: number, fps: number) => {
+      if (!activeClip) return;
+      setBusy(true);
+      try {
+        const r = await clipflow.exportGif(activeClip.path, start, end, width, fps);
+        pushToast(
+          "ok",
+          "GIF exported",
+          `${r.file_name} · ${r.width}×${r.height} · ${r.frame_count} frames · ${formatBytes(
+            r.size_bytes,
+          )}`,
+        );
+      } catch (e) {
+        pushToast("err", "GIF export failed", String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [activeClip, pushToast],
+  );
+
   const snapshotClip = useCallback(
     async (clip: ClipMetadata, pngBase64: string) => {
       try {
@@ -937,6 +1052,154 @@ export default function App() {
     }
     return sorted;
   }, [clips, query, audioOnly, gameFilter, favOnly, tagFilter, sortKey]);
+
+  // The visible order for shift-click ranges. Kept in a ref so the selection
+  // click handler stays referentially stable (the gallery is memoised) while
+  // still reading the freshest filter/sort at click time.
+  const filteredPathsRef = useRef<string[]>([]);
+  filteredPathsRef.current = filtered.map((c) => c.path);
+
+  // ------------------------------------------------------ batch selection
+  // Set form for O(1) membership tests in the virtualised grid.
+  const selectedSet = useMemo(() => new Set(selection.selected), [selection.selected]);
+
+  const handleCardSelect = useCallback(
+    (clip: ClipMetadata, mods: { ctrl: boolean; shift: boolean }) => {
+      dispatchSelection({
+        type: "click",
+        path: clip.path,
+        order: filteredPathsRef.current,
+        ctrl: mods.ctrl,
+        shift: mods.shift,
+      });
+    },
+    [],
+  );
+
+  const selectAllVisible = useCallback(() => {
+    dispatchSelection({ type: "select-all", order: filteredPathsRef.current });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    dispatchSelection({ type: "clear" });
+    setConfirmDeleteSelection(false);
+    setTagAction(null);
+  }, []);
+
+  const deleteSelected = useCallback(async () => {
+    const paths = [...selection.selected];
+    setConfirmDeleteSelection(false);
+    if (paths.length === 0) return;
+    setBusy(true);
+    try {
+      const n = await clipflow.deleteClips(paths);
+      const gone = new Set(paths);
+      setClips((prev) => prev.filter((c) => !gone.has(c.path)));
+      if (activeClipRef.current && gone.has(activeClipRef.current.path)) {
+        setActiveClip(null);
+      }
+      dispatchSelection({ type: "clear" });
+      pushToast(
+        "warn",
+        `Deleted ${n} clip${n === 1 ? "" : "s"}`,
+        n === paths.length ? undefined : `Requested ${paths.length}, removed ${n}.`,
+      );
+    } catch (e) {
+      pushToast("err", "Delete failed", String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [selection.selected, pushToast]);
+
+  const setSelectedFavorite = useCallback(
+    async (favorite: boolean) => {
+      const paths = [...selection.selected];
+      if (paths.length === 0) return;
+      // Optimistic: the gallery updates instantly, the sidecar persists.
+      setClips((prev) =>
+        prev.map((c) => (paths.includes(c.path) ? { ...c, favorite } : c)),
+      );
+      setActiveClip((c) => (c && paths.includes(c.path) ? { ...c, favorite } : c));
+      try {
+        const n = await clipflow.setClipsFavorite(paths, favorite);
+        pushToast(
+          "ok",
+          favorite ? `Added ${n} to favourites` : `Removed ${n} from favourites`,
+        );
+      } catch (e) {
+        pushToast("err", "Could not update favourites", String(e));
+      }
+    },
+    [selection.selected, pushToast],
+  );
+
+  const applyTagToSelection = useCallback(
+    async (tag: string, add: boolean) => {
+      const clean = tag.trim().slice(0, 24);
+      setTagAction(null);
+      setTagInput("");
+      if (!clean) return;
+      const paths = [...selection.selected];
+      if (paths.length === 0) return;
+      if (add) {
+        setClips((prev) =>
+          prev.map((c) =>
+            paths.includes(c.path) && !c.tags.includes(clean)
+              ? { ...c, tags: [...c.tags, clean].slice(0, 12) } // backend caps at MAX_TAGS
+              : c,
+          ),
+        );
+      } else {
+        setClips((prev) =>
+          prev.map((c) =>
+            paths.includes(c.path) ? { ...c, tags: c.tags.filter((t) => t !== clean) } : c,
+          ),
+        );
+      }
+      try {
+        const n = add
+          ? await clipflow.addClipsTag(paths, clean)
+          : await clipflow.removeClipsTag(paths, clean);
+        pushToast(
+          "ok",
+          add ? `Tagged ${n} clip${n === 1 ? "" : "s"}` : `Removed #${clean} from ${n} clips`,
+        );
+      } catch (e) {
+        pushToast("err", "Could not update tags", String(e));
+      }
+    },
+    [selection.selected, pushToast],
+  );
+
+  const copySelectedPaths = useCallback(async () => {
+    const paths = [...selection.selected];
+    if (paths.length === 0) return;
+    try {
+      await clipflow.copyClips(paths);
+      pushToast(
+        "ok",
+        native ? "Clips copied to clipboard" : "Paths copied",
+        native
+          ? "Paste them straight into Discord or Explorer."
+          : paths.join("\n"),
+      );
+    } catch (e) {
+      pushToast("err", "Clipboard failed", String(e));
+    }
+  }, [selection.selected, native, pushToast]);
+
+  // ESC clears the selection / exits select mode, file-manager style.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (selectionCount(selection) > 0) dispatchSelection({ type: "clear" });
+      setSelectMode(false);
+      setConfirmDeleteSelection(false);
+      setTagAction(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
 
   const totalBytes = useMemo(
     () => clips.reduce((acc, c) => acc + c.size_bytes, 0),
@@ -1018,6 +1281,7 @@ export default function App() {
               stats={stats}
               hotkey={settings.hotkeySave}
               busy={busy}
+              eco={ecoState}
               onToggle={handleToggle}
               onSave={() => void handleSave()}
             />
@@ -1091,6 +1355,21 @@ export default function App() {
                     ★ FAVS
                   </button>
                   <button
+                    onClick={() => {
+                      setSelectMode((v) => !v);
+                      setTagAction(null);
+                    }}
+                    title="Multi-select mode: click cards to select, Ctrl/Shift for ranges"
+                    className={cn(
+                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      selectMode || selectionCount(selection) > 0
+                        ? "border-cyan-300/60 bg-cyan-400/15 text-cyan-100"
+                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                    )}
+                  >
+                    ☑ SELECT
+                  </button>
+                  <button
                     onClick={() => setCompact((v) => !v)}
                     title="Compact grid"
                     className={cn(
@@ -1124,6 +1403,127 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {(selectMode || selectionCount(selection) > 0) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-400/[0.06] px-3 py-2">
+                  <span className="font-mono text-[10px] font-semibold tracking-[0.18em] text-cyan-200">
+                    {selectionCount(selection)} SELECTED
+                  </span>
+                  <div className="h-4 w-px bg-white/10" />
+                  <button
+                    onClick={() => void setSelectedFavorite(true)}
+                    title="Star all selected"
+                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-amber-300/60 hover:text-amber-200"
+                  >
+                    ★ FAV
+                  </button>
+                  <button
+                    onClick={() => void setSelectedFavorite(false)}
+                    title="Unstar all selected"
+                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+                  >
+                    ☆ UNFAV
+                  </button>
+                  <button
+                    onClick={() => setTagAction(tagAction === "add" ? null : "add")}
+                    title="Add a tag to every selected clip"
+                    className={cn(
+                      "rounded-lg border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                      tagAction === "add"
+                        ? "border-fuchsia-300/60 bg-fuchsia-500/15 text-fuchsia-100"
+                        : "border-white/10 text-slate-300 hover:border-fuchsia-300/50 hover:text-fuchsia-200",
+                    )}
+                  >
+                    # +TAG
+                  </button>
+                  <button
+                    onClick={() => setTagAction(tagAction === "remove" ? null : "remove")}
+                    title="Remove a tag from every selected clip"
+                    className={cn(
+                      "rounded-lg border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                      tagAction === "remove"
+                        ? "border-fuchsia-300/60 bg-fuchsia-500/15 text-fuchsia-100"
+                        : "border-white/10 text-slate-300 hover:border-fuchsia-300/50 hover:text-fuchsia-200",
+                    )}
+                  >
+                    # −TAG
+                  </button>
+                  <button
+                    onClick={() => void copySelectedPaths()}
+                    title="Copy every selected path as a file drop"
+                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-cyan-300/50 hover:text-cyan-200"
+                  >
+                    ⧉ PATHS
+                  </button>
+                  <button
+                    onClick={selectAllVisible}
+                    disabled={selectionCount(selection) >= filtered.length}
+                    title="Select every visible clip"
+                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-white/30 hover:text-slate-100 disabled:opacity-35"
+                  >
+                    ALL
+                  </button>
+                  {confirmDeleteSelection ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] tracking-[0.1em] text-rose-200">
+                        DELETE {selectionCount(selection)} CLIP
+                        {selectionCount(selection) === 1 ? "" : "S"}?
+                      </span>
+                      <button
+                        onClick={() => void deleteSelected()}
+                        className="rounded-lg border border-rose-400/70 bg-rose-500/20 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-rose-100 transition hover:bg-rose-500/30"
+                      >
+                        CONFIRM
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteSelection(false)}
+                        className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-400 transition hover:text-slate-200"
+                      >
+                        CANCEL
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteSelection(true)}
+                      title="Delete every selected clip"
+                      className="rounded-lg border border-rose-500/30 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-500/10"
+                    >
+                      ✕ DELETE
+                    </button>
+                  )}
+                  <div className="flex-1" />
+                  {tagAction && (
+                    <form
+                      className="flex items-center gap-1"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void applyTagToSelection(tagInput, tagAction === "add");
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        placeholder={tagAction === "add" ? "tag to add…" : "tag to remove…"}
+                        className="w-36 rounded-lg border border-white/15 bg-black/60 px-2 py-1 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-fuchsia-200 transition hover:bg-fuchsia-500/20"
+                      >
+                        OK
+                      </button>
+                    </form>
+                  )}
+                  <button
+                    onClick={clearSelection}
+                    title="Clear selection (Esc)"
+                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-400 transition hover:border-white/30 hover:text-slate-100"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               {allTags.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -1160,7 +1560,10 @@ export default function App() {
                 clips={filtered}
                 loading={loadingClips}
                 compact={compact}
+                selectedPaths={selectedSet}
+                selectMode={selectMode}
                 onOpen={openClip}
+                onSelect={handleCardSelect}
                 onCopy={copyClip}
                 onReveal={revealClip}
                 onOpenExternal={openExternalClip}
@@ -1376,6 +1779,7 @@ export default function App() {
           onRename={(name) => void renameClip(activeClip, name)}
           onSnapshot={(png) => void snapshotClip(activeClip, png)}
           onSplit={(t) => void splitClip(t)}
+          onExportGif={(start, end, width, fps) => void exportGif(start, end, width, fps)}
           onDiscard={async () => {
             await deleteClip(activeClip);
             setActiveClip(null);

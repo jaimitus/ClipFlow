@@ -89,6 +89,24 @@ pub struct Settings {
     /// Microphone volume in the mix, 0-100. Applies live.
     #[serde(default = "default_100")]
     pub mic_volume: u32,
+    /// Adaptive capture (ECO): on battery or under memory pressure the deck
+    /// shrinks the rolling buffer live and caps the fps. Invisible when off.
+    #[serde(default)]
+    pub adaptive_eco: bool,
+    /// Battery % at or below which ECO kicks in while on battery.
+    #[serde(default = "default_30")]
+    pub eco_battery_threshold_pct: u32,
+    /// Free physical RAM (GiB) below which ECO kicks in.
+    #[serde(default = "default_4")]
+    pub eco_ram_free_gbs: u32,
+}
+
+fn default_30() -> u32 {
+    30
+}
+
+fn default_4() -> u32 {
+    4
 }
 
 fn default_100() -> u32 {
@@ -128,6 +146,9 @@ impl Default for Settings {
             privacy_pause_when_unfocused: false,
             game_volume: 100,
             mic_volume: 100,
+            adaptive_eco: false,
+            eco_battery_threshold_pct: 30,
+            eco_ram_free_gbs: 4,
         }
     }
 }

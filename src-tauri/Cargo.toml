@@ -52,6 +52,12 @@ base64 = "0.22.1"
 # Thumbnail encoding only - no decoders pulled in, keeps the binary tiny.
 image = { version = "0.25.5", default-features = false, features = ["png"] }
 
+# GIF export: pure-Rust encoder + NeuQuant palette quantiser. Both are tiny
+# and dependency-free, so "share this highlight" stays a one-shot export with
+# no ffmpeg and no bundled binaries.
+gif = "0.13"
+color_quant = "1.1"
+
 # ------------------------------------------------- Windows Graphics / Media
 # Everything below is compiled only on Windows targets. The feature list is
 # deliberately narrow so link time and binary size stay minimal.
@@ -64,6 +70,7 @@ features = [
     "Win32_System_Threading",
     "Win32_System_Performance",
     "Win32_System_ProcessStatus",
+    "Win32_System_Power",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Memory",
     "Win32_System_Variant",

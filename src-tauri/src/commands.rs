@@ -134,10 +134,12 @@ pub fn get_engine_stats(state: State<'_, AppState>) -> Result<EngineStats, Strin
 
 #[tauri::command]
 pub fn set_buffer_seconds(state: State<'_, AppState>, seconds: u32) -> Result<(), String> {
-    state.engine.set_buffer_seconds(seconds);
-    let mut s = state.settings.write();
-    s.buffer_seconds = seconds.clamp(5, 600);
-    s.save()
+    // Live-only apply: the engine's rolling window changes without touching the
+    // persisted setting — persisting is `update_settings`' job. Adaptive ECO
+    // mode relies on this: it shrinks the ring on battery/RAM pressure and
+    // restores it afterwards without clobbering the user's configured value.
+    state.engine.set_buffer_seconds(seconds.clamp(5, 600));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +352,66 @@ fn split_at_seconds(duration_seconds: f32, at_seconds: f32) -> Result<f32, Strin
     Ok(at_seconds.clamp(0.2, duration_seconds - 0.2))
 }
 
+/// Result of a GIF export (the trimmer's EXPORT GIF button).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GifExportResult {
+    pub path: String,
+    pub file_name: String,
+    pub width: u32,
+    pub height: u32,
+    pub frame_count: u32,
+    pub size_bytes: u64,
+    pub elapsed_ms: f32,
+}
+
+/// Exports the trimmed selection (`start_seconds`..`end_seconds`) as an
+/// animated GIF next to the source clip. Frames are decoded through the
+/// existing Media Foundation SourceReader, quantised to a 256-colour palette
+/// and encoded with the pure-Rust `gif` crate — no ffmpeg, one-shot export.
+#[tauri::command]
+pub async fn export_clip_gif(
+    source_path: String,
+    start_seconds: f32,
+    end_seconds: f32,
+    width: Option<u32>,
+    fps: Option<u32>,
+) -> Result<GifExportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = PathBuf::from(&source_path);
+        if !source.exists() {
+            return Err(format!("source clip not found: {source_path}"));
+        }
+        let width = width.unwrap_or(480).clamp(160, 1920);
+        let fps = fps.unwrap_or(15).clamp(5, 30);
+        let dest = crate::media::gif::suggested_gif_path(&source);
+        let stats = crate::media::gif::export_gif(
+            &source,
+            &dest,
+            start_seconds,
+            end_seconds,
+            width,
+            fps,
+        )
+        .map_err(|e| e.to_string())?;
+        let size_bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+        Ok(GifExportResult {
+            path: dest.to_string_lossy().to_string(),
+            file_name: dest
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            width: stats.width,
+            height: stats.height,
+            frame_count: stats.frame_count,
+            size_bytes,
+            elapsed_ms: stats.elapsed_ms,
+        })
+    })
+    .await
+    .map_err(|e| format!("gif task panicked: {e}"))?
+}
+
 /// Splits a clip in two at `at_seconds` with two stream-copy trims.
 ///
 /// Both halves run inside ONE blocking task so the Media Foundation sessions
@@ -495,7 +557,61 @@ pub fn rename_clip(
 /// Discord / Explorer / Slack / Teams paste handlers expect for a video.
 #[tauri::command]
 pub fn copy_clip_to_clipboard(path: String) -> Result<(), String> {
-    clipboard::copy_file(Path::new(&path))
+    clipboard::copy_files(&[PathBuf::from(path)])
+}
+
+/// Puts several clips on the clipboard as one multi-file CF_HDROP drop
+/// (batch library management — paste the whole selection into Discord).
+#[tauri::command]
+pub fn copy_clips_to_clipboard(paths: Vec<String>) -> Result<(), String> {
+    let clips: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    clipboard::copy_files(&clips)
+}
+
+/// Deletes several clips at once (batch library management). Returns how many
+/// were actually removed so the UI can toast a precise count.
+#[tauri::command]
+pub fn delete_clips(paths: Vec<String>) -> Result<u32, String> {
+    let mut deleted = 0u32;
+    for p in &paths {
+        if library::delete_clip(Path::new(p)).is_ok() {
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// Stars / unstars many clips in one sidecar persist. Returns how many
+/// entries actually changed.
+#[tauri::command]
+pub fn set_clips_favorite(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    favorite: bool,
+) -> Result<u32, String> {
+    Ok(state.clip_meta.lock().set_favorite_many(&paths, favorite))
+}
+
+/// Adds one tag to many clips (dedup + caps, single persist). Returns how
+/// many clips actually gained the tag.
+#[tauri::command]
+pub fn add_clips_tag(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    tag: String,
+) -> Result<u32, String> {
+    Ok(state.clip_meta.lock().add_tag_many(&paths, &tag))
+}
+
+/// Removes one tag from many clips (single persist). Returns how many clips
+/// actually lost the tag.
+#[tauri::command]
+pub fn remove_clips_tag(
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    tag: String,
+) -> Result<u32, String> {
+    Ok(state.clip_meta.lock().remove_tag_many(&paths, &tag))
 }
 
 #[tauri::command]
@@ -652,6 +768,9 @@ pub struct SettingsPatch {
     pub privacy_pause_when_unfocused: Option<bool>,
     pub game_volume: Option<u32>,
     pub mic_volume: Option<u32>,
+    pub adaptive_eco: Option<bool>,
+    pub eco_battery_threshold_pct: Option<u32>,
+    pub eco_ram_free_gbs: Option<u32>,
 }
 
 #[tauri::command]
@@ -792,8 +911,26 @@ pub fn update_settings(
         s.mic_volume = v.clamp(0, 100);
         state.engine.set_audio_volumes(s.game_volume, s.mic_volume);
     }
+    if let Some(v) = patch.adaptive_eco {
+        s.adaptive_eco = v;
+        // Re-evaluate immediately so enabling ECO reacts now, not at the next
+        // poll. The deck applies the resulting buffer change itself.
+    }
+    if let Some(v) = patch.eco_battery_threshold_pct {
+        s.eco_battery_threshold_pct = v.clamp(5, 100);
+    }
+    if let Some(v) = patch.eco_ram_free_gbs {
+        s.eco_ram_free_gbs = v.clamp(1, 32);
+    }
     s.save()?;
     Ok(s.clone())
+}
+
+/// Battery + RAM snapshot for the adaptive ECO capture mode. Cheap local
+/// reads (one syscall each) — safe to poll every few seconds.
+#[tauri::command]
+pub fn get_power_state() -> Result<crate::power::PowerState, String> {
+    crate::power::read_power_state()
 }
 
 /// Shows / hides the always-on-top recording HUD window. While showing, it is
@@ -1095,10 +1232,13 @@ pub fn get_system_report(state: State<'_, AppState>) -> Result<SystemReport, Str
 // ---------------------------------------------------------------------------
 
 mod clipboard {
-    use std::path::Path;
+    use std::path::PathBuf;
 
+    /// Multi-file CF_HDROP: a double-NUL terminated list of wide paths, each
+    /// file its own NUL-terminated string. Discord / Explorer / Teams paste
+    /// handlers read exactly this shape.
     #[cfg(all(windows, not(feature = "headless-sim")))]
-    pub fn copy_file(path: &Path) -> Result<(), String> {
+    pub fn copy_files(paths: &[PathBuf]) -> Result<(), String> {
         use std::os::windows::ffi::OsStrExt;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::DataExchange::{
@@ -1108,14 +1248,18 @@ mod clipboard {
         use windows::Win32::System::Ole::CF_HDROP;
         use windows::Win32::UI::Shell::DROPFILES;
 
-        if !path.exists() {
-            return Err(format!("clip not found: {}", path.display()));
+        for p in paths {
+            if !p.exists() {
+                return Err(format!("clip not found: {}", p.display()));
+            }
         }
 
-        // Double-NUL terminated wide file list, as required by DROPFILES.
-        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-        wide.push(0);
-        wide.push(0);
+        let mut wide: Vec<u16> = Vec::new();
+        for p in paths {
+            wide.extend(p.as_os_str().encode_wide());
+            wide.push(0);
+        }
+        wide.push(0); // second NUL terminates the whole list
 
         let header = std::mem::size_of::<DROPFILES>();
         let total = header + wide.len() * 2;
@@ -1150,11 +1294,17 @@ mod clipboard {
     }
 
     #[cfg(any(not(windows), feature = "headless-sim"))]
-    pub fn copy_file(path: &Path) -> Result<(), String> {
-        if !path.exists() {
-            return Err(format!("clip not found: {}", path.display()));
+    pub fn copy_files(paths: &[PathBuf]) -> Result<(), String> {
+        for p in paths {
+            if !p.exists() {
+                return Err(format!("clip not found: {}", p.display()));
+            }
         }
-        log::info!("[clipflow] (stub) copied {} to clipboard", path.display());
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        log::info!("[clipflow] (stub) copied {} to clipboard", names.join(", "));
         Ok(())
     }
 }

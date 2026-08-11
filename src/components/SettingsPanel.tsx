@@ -291,6 +291,57 @@ export default function SettingsPanel({
       </section>
 
       <section className="panel rounded-2xl p-4">
+        <h3 className="font-mono text-[11px] tracking-[0.24em] text-lime-300">
+          ADAPTIVE CAPTURE (ECO)
+        </h3>
+
+        <Row
+          label="ECO mode"
+          hint="On battery or low RAM the rolling buffer shrinks to 30 s live (and fps caps at 30 on the next engine start) — ClipFlow steps out of the way when the machine is under pressure, then restores itself automatically."
+        >
+          <Toggle
+            on={settings.adaptiveEco}
+            onClick={() => onChange({ adaptiveEco: !settings.adaptiveEco })}
+          />
+        </Row>
+
+        {settings.adaptiveEco && (
+          <>
+            <Row
+              label={`Battery trigger — ≤ ${settings.ecoBatteryThresholdPct}%`}
+              hint="While on battery, ECO activates when the remaining charge drops to this level."
+            >
+              <input
+                type="range"
+                className="cf-range w-48"
+                min={5}
+                max={100}
+                step={5}
+                value={settings.ecoBatteryThresholdPct}
+                onChange={(e) =>
+                  onChange({ ecoBatteryThresholdPct: Number(e.target.value) })
+                }
+              />
+            </Row>
+            <Row
+              label={`RAM trigger — < ${settings.ecoRamFreeGbs} GiB free`}
+              hint="ECO activates when available physical memory drops below this threshold."
+            >
+              <input
+                type="range"
+                className="cf-range w-48"
+                min={1}
+                max={16}
+                step={1}
+                value={settings.ecoRamFreeGbs}
+                onChange={(e) => onChange({ ecoRamFreeGbs: Number(e.target.value) })}
+              />
+            </Row>
+          </>
+        )}
+      </section>
+
+      <section className="panel rounded-2xl p-4">
         <h3 className="font-mono text-[11px] tracking-[0.24em] text-fuchsia-300">
           WORKFLOW
         </h3>

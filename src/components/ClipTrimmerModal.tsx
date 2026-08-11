@@ -24,6 +24,8 @@ interface Props {
   onSnapshot: (pngBase64: string) => Promise<void> | void;
   /** Cuts the clip in two at the playhead (two stream-copy trims). */
   onSplit: (splitSeconds: number) => Promise<void> | void;
+  /** Exports the selection as an animated GIF (native; errors toast in App). */
+  onExportGif: (start: number, end: number, width: number, fps: number) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onClose: () => void;
   /** Stars / unstars this clip (persisted in the local sidecar store). */
@@ -45,6 +47,7 @@ export default function ClipTrimmerModal({
   onRename,
   onSnapshot,
   onSplit,
+  onExportGif,
   onDiscard,
   onClose,
   onToggleFavorite,
@@ -64,6 +67,9 @@ export default function ClipTrimmerModal({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(clip.file_name);
   const [tagDraft, setTagDraft] = useState("");
+  const [gifOpen, setGifOpen] = useState(false);
+  const [gifWidth, setGifWidth] = useState(480);
+  const [gifFps, setGifFps] = useState(15);
 
   const src = clip.preview_url ?? assetUrl(clip.path);
   const hasVideo = src.length > 0;
@@ -605,6 +611,80 @@ export default function ClipTrimmerModal({
             >
               ◉ SNAPSHOT PNG
             </button>
+            <div className="relative">
+              <button
+                onClick={() => setGifOpen((v) => !v)}
+                disabled={busy}
+                className={cn(
+                  "no-drag rounded-lg border px-3.5 py-2 font-mono text-[11px] tracking-[0.14em] transition disabled:opacity-50",
+                  gifOpen
+                    ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
+                    : "border-white/10 text-slate-300 hover:border-lime-300/50 hover:text-lime-200",
+                )}
+              >
+                🎞 GIF
+              </button>
+              {gifOpen && (
+                <div className="animate-pop absolute bottom-full right-0 z-20 mb-2 w-60 rounded-xl border border-white/10 bg-[#0a0d1a] p-3 shadow-2xl">
+                  <div className="font-mono text-[9px] tracking-[0.2em] text-slate-500">
+                    EXPORT GIF — SHARE THE HIGHLIGHT
+                  </div>
+                  <div className="mt-2.5">
+                    <div className="font-mono text-[9px] tracking-[0.14em] text-slate-600">
+                      WIDTH
+                    </div>
+                    <div className="mt-1 flex gap-1">
+                      {[320, 480, 720].map((w) => (
+                        <button
+                          key={w}
+                          onClick={() => setGifWidth(w)}
+                          className={cn(
+                            "flex-1 rounded-md border px-1 py-1 font-mono text-[10px] transition",
+                            gifWidth === w
+                              ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
+                              : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                          )}
+                        >
+                          {w}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <div className="font-mono text-[9px] tracking-[0.14em] text-slate-600">FPS</div>
+                    <div className="mt-1 flex gap-1">
+                      {[10, 15, 20].map((f) => (
+                        <button
+                          key={f}
+                          onClick={() => setGifFps(f)}
+                          className={cn(
+                            "flex-1 rounded-md border px-1 py-1 font-mono text-[10px] transition",
+                            gifFps === f
+                              ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
+                              : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                          )}
+                        >
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setGifOpen(false);
+                      void run(
+                        "Exporting GIF…",
+                        () => onExportGif(start, end, gifWidth, gifFps),
+                      );
+                    }}
+                    disabled={selectionSeconds < 0.2}
+                    className="mt-3 w-full rounded-lg border border-lime-300/50 bg-lime-400/15 px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-lime-100 transition hover:bg-lime-400/25 disabled:opacity-40"
+                  >
+                    EXPORT {selectionSeconds.toFixed(1)}s → GIF
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => run("Copying to clipboard…", onCopy)}
               disabled={busy}

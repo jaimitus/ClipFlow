@@ -93,6 +93,17 @@ export interface SplitResult {
   partB: TrimResult;
 }
 
+/** Result of a GIF export (the trimmer's EXPORT GIF button). */
+export interface GifExportResult {
+  path: string;
+  file_name: string;
+  width: number;
+  height: number;
+  frame_count: number;
+  size_bytes: number;
+  elapsed_ms: number;
+}
+
 export interface ClipSavedPayload {
   clip: ClipMetadata;
   flushMs: number;
@@ -158,6 +169,27 @@ export interface AppSettings {
   gameVolume: number;
   /** Microphone volume in the mix, 0-100. Applies live. */
   micVolume: number;
+  /**
+   * Adaptive capture (ECO): on battery or under memory pressure the deck
+   * shrinks the rolling buffer live and caps the fps. Invisible when off.
+   */
+  adaptiveEco: boolean;
+  /** Battery % at or below which ECO kicks in while on battery. */
+  ecoBatteryThresholdPct: number;
+  /** Free physical RAM (GiB) below which ECO kicks in. */
+  ecoRamFreeGbs: number;
+}
+
+/** A point-in-time snapshot of the machine's power / memory state. */
+export interface PowerState {
+  /** True when running on battery (DC power). */
+  onBattery: boolean;
+  /** 0-100 remaining battery (100 when on AC or unknown). */
+  batteryPercent: number;
+  /** Available physical memory in bytes. */
+  availableRamBytes: number;
+  /** Total physical memory in bytes. */
+  totalRamBytes: number;
 }
 
 /** One per-game capture preset. `id` is a stable slug like "competitivo". */

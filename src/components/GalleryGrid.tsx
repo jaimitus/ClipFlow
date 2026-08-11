@@ -9,7 +9,12 @@ interface Props {
   clips: ClipMetadata[];
   loading?: boolean;
   compact?: boolean;
+  /** Paths currently selected (multi-select), as a Set for O(1) lookups. */
+  selectedPaths?: ReadonlySet<string>;
+  /** When on, a plain card click selects instead of opening the trimmer. */
+  selectMode?: boolean;
   onOpen: (clip: ClipMetadata) => void;
+  onSelect: (clip: ClipMetadata, mods: { ctrl: boolean; shift: boolean }) => void;
   onCopy: (clip: ClipMetadata) => void;
   onReveal: (clip: ClipMetadata) => void;
   onOpenExternal: (clip: ClipMetadata) => void;
@@ -62,7 +67,10 @@ function IconButton({
 const ClipCard = memo(function ClipCard({
   clip,
   compact,
+  selected,
+  selectMode,
   onOpen,
+  onSelect,
   onCopy,
   onReveal,
   onOpenExternal,
@@ -71,7 +79,10 @@ const ClipCard = memo(function ClipCard({
 }: {
   clip: ClipMetadata;
   compact?: boolean;
+  selected: boolean;
+  selectMode: boolean;
   onOpen: (c: ClipMetadata) => void;
+  onSelect: (c: ClipMetadata, mods: { ctrl: boolean; shift: boolean }) => void;
   onCopy: (c: ClipMetadata) => void;
   onReveal: (c: ClipMetadata) => void;
   onOpenExternal: (c: ClipMetadata) => void;
@@ -97,10 +108,27 @@ const ClipCard = memo(function ClipCard({
     videoRef.current?.pause();
   }, []);
 
+  // Primary click: in select mode (or with a keyboard modifier) the card
+  // selects; otherwise it opens the trimmer, exactly as before.
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
+      if (selectMode || mods.ctrl || mods.shift) {
+        onSelect(clip, mods);
+      } else {
+        onOpen(clip);
+      }
+    },
+    [clip, onOpen, onSelect, selectMode],
+  );
+
   return (
     <article
-      className="panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl"
-      onClick={() => onOpen(clip)}
+      className={cn(
+        "panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl transition-colors",
+        selected && "border-cyan-300/70 ring-2 ring-cyan-300/60",
+      )}
+      onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
@@ -160,7 +188,23 @@ const ClipCard = memo(function ClipCard({
           </span>
         )}
 
-        <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+        <div
+          className={cn(
+            "absolute right-2 top-2 flex gap-1.5 transition",
+            selectMode ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+        >
+          {(selectMode || selected) && (
+            <IconButton
+              label={selected ? "✓" : "☐"}
+              title={selected ? "Deselect clip" : "Select clip"}
+              tone="slate"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(clip, { ctrl: true, shift: false });
+              }}
+            />
+          )}
           <IconButton
             label={clip.favorite ? "★" : "☆"}
             title={clip.favorite ? "Remove from favourites" : "Add to favourites"}
@@ -250,7 +294,10 @@ const GalleryGrid = memo(function GalleryGrid({
   clips,
   loading,
   compact,
+  selectedPaths,
+  selectMode,
   onOpen,
+  onSelect,
   onCopy,
   onReveal,
   onOpenExternal,
@@ -313,7 +360,10 @@ const GalleryGrid = memo(function GalleryGrid({
             key={clip.id}
             clip={clip}
             compact={compact}
+            selected={selectedPaths?.has(clip.path) ?? false}
+            selectMode={!!selectMode}
             onOpen={onOpen}
+            onSelect={onSelect}
             onCopy={onCopy}
             onReveal={onReveal}
             onOpenExternal={onOpenExternal}
