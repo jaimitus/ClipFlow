@@ -52,11 +52,22 @@ pub struct TrimResult {
 }
 
 pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMetadata>> {
+    scan_directory_impl(dir, with_thumbnails, &ProbeCache::path())
+}
+
+/// Shared scan core with an injectable cache file path: `scan_directory` uses
+/// the default AppData location, while the unit tests point it at a temp file
+/// so the real machine's cache is never touched.
+fn scan_directory_impl(
+    dir: &Path,
+    with_thumbnails: bool,
+    cache_path: &Path,
+) -> RResult<Vec<ClipMetadata>> {
     if !dir.exists() {
         std::fs::create_dir_all(dir)?;
         return Ok(Vec::new());
     }
-    let mut cache = ProbeCache::load();
+    let mut cache = ProbeCache::load_from(cache_path);
     let mut clips = Vec::new();
     let mut dirty = false;
     let mut seen = std::collections::HashSet::new();
@@ -69,7 +80,7 @@ pub fn scan_directory(dir: &Path, with_thumbnails: bool) -> RResult<Vec<ClipMeta
         dirty = true;
     }
     if dirty {
-        cache.save();
+        cache.save_to(cache_path);
     }
     clips.sort_by(|a, b| b.created_unix_ms.cmp(&a.created_unix_ms));
     Ok(clips)
@@ -245,18 +256,17 @@ impl ProbeCache {
         std::env::temp_dir().join("ClipFlow").join("probe_cache.json")
     }
 
-    fn load() -> Self {
-        std::fs::read_to_string(Self::path())
+    fn load_from(path: &Path) -> Self {
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_default()
     }
 
-    fn save(&self) {
+    fn save_to(&self, path: &Path) {
         let Ok(json) = serde_json::to_string(self) else {
             return;
         };
-        let path = Self::path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -264,7 +274,7 @@ impl ProbeCache {
         // cache behind (the next launch would just fall back to re-probing).
         let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, &json).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
+            let _ = std::fs::rename(&tmp, path);
         }
     }
 }
@@ -753,7 +763,7 @@ pub fn trim_stream_copy(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::suggested_trim_path;
+    use super::{scan_directory_impl, suggested_trim_path, ProbeCache};
 
     /// Unique temp dir per test process so parallel runs never collide.
     fn temp_dir(tag: &str) -> PathBuf {
@@ -820,5 +830,126 @@ mod tests {
         // A bare relative file name still gets a sane sibling path.
         let got = suggested_trim_path(Path::new("bare.mp4"));
         assert_eq!(got, PathBuf::from("bare_trim.mp4"));
+    }
+
+    // ------------------------------------------------------------- probe cache
+    // The cache tests exercise the full scan against real temp files with an
+    // injected cache path. The video bytes are garbage on purpose: the cache
+    // keys on (size, mtime) and a probe failure just yields default metadata,
+    // so the hit/miss/prune/atomic-save mechanics are what is under test.
+    // The `mod_ms == 0` re-probe branch (filesystems that cannot report an
+    // mtime) is deliberately not tested — it is impossible to force
+    // `modified()` to fail on a real file.
+
+    fn write_fake_clip(dir: &Path, name: &str, bytes: usize) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, vec![0u8; bytes]).unwrap();
+        p
+    }
+
+    fn cache_path(dir: &Path) -> PathBuf {
+        dir.join("probe_cache.json")
+    }
+
+    fn key_of(path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn cache_miss_writes_and_persists_entries() {
+        let dir = temp_dir("miss");
+        write_fake_clip(&dir, "a.mp4", 1000);
+        write_fake_clip(&dir, "b.mp4", 2000);
+
+        let clips = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+        assert_eq!(clips.len(), 2);
+
+        // Every clip was probed (miss) and the cache was persisted for reuse.
+        let cache = ProbeCache::load_from(&cache_path(&dir));
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(&key_of(&dir.join("a.mp4"))));
+        assert!(cache.entries.contains_key(&key_of(&dir.join("b.mp4"))));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unchanged_scan_hits_cache_without_rewriting_it() {
+        let dir = temp_dir("hit");
+        write_fake_clip(&dir, "a.mp4", 1000);
+        let _ = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+
+        let before = std::fs::metadata(cache_path(&dir))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let clips = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+        let after = std::fs::metadata(cache_path(&dir))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        assert_eq!(clips.len(), 1);
+        // Full hit -> nothing dirty -> the cache file is not rewritten.
+        // (mtime comparison assumes NTFS-class granularity, i.e. the Windows
+        // target; on a coarse-granularity FS a rewrite within the same window
+        // would false-pass, so this is a proxy for "file untouched".)
+        assert_eq!(before, after);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn changed_file_reprobes_and_updates_its_entry() {
+        let dir = temp_dir("reprobe");
+        let p = write_fake_clip(&dir, "a.mp4", 1000);
+        let _ = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+
+        // Grow the file -> (size, mtime) mismatch -> cache miss -> re-probe
+        // and persist the fresh entry.
+        std::fs::write(&p, vec![0u8; 5000]).unwrap();
+        let clips = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+        assert_eq!(clips.len(), 1);
+        // Mirrors the real file size only (comes from `meta.len()`, not the
+        // cache) — the cache assertion below is the one that proves the
+        // re-probe happened and the stale entry was replaced.
+        assert_eq!(clips[0].size_bytes, 5000);
+
+        let cache = ProbeCache::load_from(&cache_path(&dir));
+        assert_eq!(cache.entries[&key_of(&p)].size_bytes, 5000);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deleted_clips_are_pruned_from_the_cache() {
+        let dir = temp_dir("prune");
+        write_fake_clip(&dir, "keep.mp4", 1000);
+        let gone = write_fake_clip(&dir, "gone.mp4", 2000);
+        let _ = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+        assert!(ProbeCache::load_from(&cache_path(&dir))
+            .entries
+            .contains_key(&key_of(&gone)));
+
+        std::fs::remove_file(&gone).unwrap();
+        let clips = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+        assert_eq!(clips.len(), 1);
+        assert!(!ProbeCache::load_from(&cache_path(&dir))
+            .entries
+            .contains_key(&key_of(&gone)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_is_atomic_and_leaves_no_temp_file() {
+        let dir = temp_dir("atomic");
+        write_fake_clip(&dir, "a.mp4", 1000);
+        let _ = scan_directory_impl(&dir, false, &cache_path(&dir)).unwrap();
+
+        let cp = cache_path(&dir);
+        assert!(cp.exists());
+        // The rename path is the atomic one: no .tmp may be left behind.
+        assert!(!cp.with_extension("json.tmp").exists());
+        // And what was saved round-trips back into the same entries.
+        let cache = ProbeCache::load_from(&cp);
+        assert_eq!(cache.entries.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
