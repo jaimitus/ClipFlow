@@ -1011,7 +1011,7 @@ pub(crate) fn force_topmost(_window: &tauri::WebviewWindow) {}
 /// dragged around, but never steals focus (config `focus: false`).
 #[tauri::command]
 pub fn set_hud_visible(app: AppHandle, visible: bool) -> Result<(), String> {
-    const HUD_W: i32 = 440;
+    const HUD_W: i32 = 540;
     const HUD_H: i32 = 64;
     let Some(hud) = app.get_webview_window("hud") else {
         return Ok(());

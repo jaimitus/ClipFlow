@@ -1269,17 +1269,18 @@ export default function App() {
     }
   }, [stats.audio_error, settings.captureSystemAudio, settings.captureMicrophone, pushToast]);
 
-  // Keep the always-on-top HUD in sync with the armed state + the setting.
-  // Only calls the backend when the visible-state actually flips.
+  // Keep the always-on-top HUD in sync with the setting. It stays up even
+  // while the buffer is disarmed — it doubles as a control panel (arm / save),
+  // so only the pill content follows the armed state, not the window itself.
   const lastHudVisible = useRef<boolean | null>(null);
   useEffect(() => {
     if (!native) return;
-    const shouldShow = armed && settings.hudEnabled;
+    const shouldShow = settings.hudEnabled;
     if (lastHudVisible.current !== shouldShow) {
       lastHudVisible.current = shouldShow;
       void clipflow.setHudVisible(shouldShow);
     }
-  }, [armed, settings.hudEnabled, native]);
+  }, [settings.hudEnabled, native]);
 
   const flushStats = useMemo(() => {
     const h = flushHistory;

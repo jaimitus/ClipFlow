@@ -32,7 +32,7 @@
         "label": "hud",
         "title": "ClipFlow HUD",
         "url": "index.html?hud=1",
-        "width": 440,
+        "width": 540,
         "height": 64,
         "resizable": false,
         "decorations": false,
