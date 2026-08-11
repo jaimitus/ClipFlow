@@ -665,6 +665,11 @@ export default function App() {
     }
   }, [settings.bufferSeconds, settings.targetFps, pushToast]);
 
+  const openClip = useCallback((clip: ClipMetadata) => {
+    setActiveClip(clip);
+    setActiveFlushMs(undefined);
+  }, []);
+
   const copyClip = useCallback(
     async (clip: ClipMetadata) => {
       try {
@@ -693,18 +698,22 @@ export default function App() {
     [native, pushToast],
   );
 
+  // Read through a ref so `deleteClip` stays referentially stable (the gallery
+  // is memoised) — the closure only needs the *current* activeClip at call time.
+  const activeClipRef = useRef(activeClip);
+  activeClipRef.current = activeClip;
   const deleteClip = useCallback(
     async (clip: ClipMetadata) => {
       try {
         await clipflow.deleteClip(clip.path);
         setClips((prev) => prev.filter((c) => c.path !== clip.path));
-        if (activeClip?.path === clip.path) setActiveClip(null);
+        if (activeClipRef.current?.path === clip.path) setActiveClip(null);
         pushToast("warn", "Clip deleted", clip.file_name);
       } catch (e) {
         pushToast("err", "Delete failed", String(e));
       }
     },
-    [activeClip, pushToast],
+    [pushToast],
   );
 
   const toggleFavorite = useCallback(
@@ -1101,19 +1110,19 @@ export default function App() {
                 </div>
               )}
 
+              {/* Stable references so the memoised ClipCard/GalleryGrid can
+                  skip re-rendering when unrelated state changes (stats poll,
+                  toasts…). All of these are useCallback-wrapped above. */}
               <GalleryGrid
                 clips={filtered}
                 loading={loadingClips}
                 compact={compact}
-                onOpen={(c) => {
-                  setActiveClip(c);
-                  setActiveFlushMs(undefined);
-                }}
-                onCopy={(c) => void copyClip(c)}
-                onReveal={(c) => void revealClip(c)}
-                onOpenExternal={(c) => void openExternalClip(c)}
-                onDelete={(c) => void deleteClip(c)}
-                onToggleFavorite={(c) => void toggleFavorite(c)}
+                onOpen={openClip}
+                onCopy={copyClip}
+                onReveal={revealClip}
+                onOpenExternal={openExternalClip}
+                onDelete={deleteClip}
+                onToggleFavorite={toggleFavorite}
               />
             </section>
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { assetUrl } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { formatBytes, formatDuration, formatRelativeTime } from "../lib/format";
@@ -47,8 +47,14 @@ function IconButton({
   );
 }
 
-/** Plays the clip inline on hover, exactly like the native gallery does. */
-function ClipCard({
+/**
+ * Plays the clip inline on hover, exactly like the native gallery does.
+ *
+ * Memoised: App passes stable useCallback handlers and `clips` comes from a
+ * `useMemo`, so a card only re-renders when its own clip (or `compact`)
+ * actually changes — not on the 2 s stats poll or toast churn.
+ */
+const ClipCard = memo(function ClipCard({
   clip,
   compact,
   onOpen,
@@ -222,9 +228,14 @@ function ClipCard({
       </div>
     </article>
   );
-}
+});
 
-export default function GalleryGrid({
+/**
+ * Memoised grid: all props are stable (useCallback handlers + useMemo clips),
+ * so unrelated App state (stats poll, toasts, tab switches) skips the whole
+ * grid reconciliation instead of mapping over every card.
+ */
+const GalleryGrid = memo(function GalleryGrid({
   clips,
   loading,
   compact,
@@ -284,4 +295,6 @@ export default function GalleryGrid({
       ))}
     </div>
   );
-}
+});
+
+export default GalleryGrid;
