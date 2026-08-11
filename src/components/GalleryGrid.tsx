@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { assetUrl } from "../lib/bridge";
 import type { ClipMetadata } from "../lib/types";
 import { formatBytes, formatDuration, formatRelativeTime } from "../lib/format";
@@ -71,28 +71,35 @@ function ClipCard({
   const [hovering, setHovering] = useState(false);
   const src = clip.preview_url ?? assetUrl(clip.path);
 
+  // Stable handlers: the hover closures are re-created once instead of every render.
+  const handleMouseEnter = useCallback(() => {
+    setHovering(true);
+    const v = videoRef.current;
+    if (v) {
+      v.currentTime = 0;
+      void v.play().catch(() => undefined);
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setHovering(false);
+    videoRef.current?.pause();
+  }, []);
+
   return (
     <article
       className="panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl"
       onClick={() => onOpen(clip)}
-      onMouseEnter={() => {
-        setHovering(true);
-        const v = videoRef.current;
-        if (v) {
-          v.currentTime = 0;
-          void v.play().catch(() => undefined);
-        }
-      }}
-      onMouseLeave={() => {
-        setHovering(false);
-        videoRef.current?.pause();
-      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <div className="relative aspect-video w-full overflow-hidden bg-black">
         {clip.thumbnail ? (
           <img
             src={clip.thumbnail}
             alt={clip.title}
+            loading="lazy"
+            decoding="async"
             className={cn(
               "h-full w-full object-cover transition duration-300",
               hovering ? "scale-105 opacity-0" : "opacity-100",
