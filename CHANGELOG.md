@@ -2,6 +2,20 @@
 
 All notable changes to **ClipFlow** are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] - 2026-08-11
+
+### Added
+
+- **🖥️ The overlay is now a real control panel** — stays on top of games reliably (`SetWindowPos(HWND_TOPMOST)` after show + a 2 s re-assert in the stats heartbeat, which fixes WebView2 silently dropping the topmost style), is **draggable** anywhere on its surface, and its position **persists across launches** (`settings.hudPosition`, saved throttled on move and exactly on hide).
+- **⎙ SAVE from the overlay** — save the instant replay without alt-tabbing: behaves like the hotkey (the deck is never raised, no trimmer opens) with `SAVING… / ✓ SAVED / ✕ FAILED` feedback, dimmed with an explanatory tooltip while the buffer is disarmed or privacy mode is active.
+- **▶ ARM / ■ STOP from the overlay** — arm with the persisted capture settings or stop the buffer, no need to open the deck. The HUD now stays up whenever enabled (STANDBY state when disarmed) so it doubles as a control panel; tooltips show your real rebound hotkeys.
+- **ℹ️ Richer pill** — live `buffered/total` seconds, `resolution@fps` and the configured `bitrate` (`· 12Mb/s`, new `bitrate_kbps` in engine stats), plus a 🔒 PRIV chip while privacy mode is paused.
+- **🎞️ GIF quality overhaul** — each frame now gets its own **frame-accurate 256-colour palette** (per-frame NeuQuant local colour table) instead of one global average, so GIFs keep their colours and the dithering noise mostly disappears. The global palette pool/sample was bumped for the header.
+
+### Removed
+
+- **ECO simulation** — the SIMULATE battery/RAM buttons and injection are gone; the live battery/RAM telemetry row in Settings stays.
+
 ## [1.4.1] - 2026-08-11
 
 ### Added
