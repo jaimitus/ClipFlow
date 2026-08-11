@@ -34,6 +34,8 @@ export interface EngineStats {
   width: number;
   height: number;
   target_fps: number;
+  /** Configured encode bitrate (kbps). */
+  bitrate_kbps: number;
   capture_fps: number;
   buffer_seconds: number;
   buffered_seconds: number;

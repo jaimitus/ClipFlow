@@ -184,6 +184,8 @@ pub struct EngineStats {
     pub width: u32,
     pub height: u32,
     pub target_fps: u32,
+    /// Configured encode bitrate (kbps) — shown on the HUD / deck.
+    pub bitrate_kbps: u32,
     pub capture_fps: f32,
     pub buffer_seconds: u32,
     pub buffered_seconds: f32,
@@ -590,6 +592,7 @@ impl CaptureEngine {
             width: w,
             height: h,
             target_fps: cfg.target_fps,
+            bitrate_kbps: cfg.bitrate_kbps,
             capture_fps: *self.shared.capture_fps.read(),
             buffer_seconds: cfg.buffer_seconds,
             buffered_seconds: ring.span_seconds(),

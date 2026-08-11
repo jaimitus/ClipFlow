@@ -71,6 +71,7 @@ const IDLE_STATS: EngineStats = {
   width: 0,
   height: 0,
   target_fps: 60,
+  bitrate_kbps: 0,
   capture_fps: 0,
   buffer_seconds: 60,
   buffered_seconds: 0,
