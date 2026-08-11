@@ -1359,6 +1359,28 @@ export default function App() {
     setVisibleCount(GALLERY_PAGE_SIZE);
   }, [query, gameFilter, sortKey, audioOnly, favOnly, tagFilter]);
 
+  // Infinite scroll: a sentinel below the grid auto-loads the next page as it
+  // nears the viewport bottom (480 px pre-load keeps scrolling smooth). The
+  // observer is recreated whenever the filtered total changes so it always
+  // compares against the current count; once everything is loaded the sentinel
+  // unmounts and the observer disconnects. The LOAD MORE button below stays as
+  // the explicit fallback, and the virtualised grid keeps revealed pages
+  // DOM-light either way.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        setVisibleCount((c) => (c >= filtered.length ? c : c + GALLERY_PAGE_SIZE));
+      },
+      { rootMargin: "0px 0px 480px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [filtered.length]);
+
   return (
     <div className="bg-aurora relative flex h-screen w-screen flex-col overflow-hidden bg-[#05060d]">
       <div className="bg-grid pointer-events-none absolute inset-0 opacity-60" />
@@ -1669,7 +1691,12 @@ export default function App() {
               />
 
               {visibleClips.length < filtered.length && (
-                <div className="mt-5 flex flex-col items-center gap-2">
+                <>
+                  {/* Infinite-scroll sentinel: auto-loads the next page as it
+                      nears the bottom of the viewport (the LOAD MORE button
+                      below stays as the explicit fallback). */}
+                  <div ref={sentinelRef} className="h-px" aria-hidden />
+                  <div className="mt-5 flex flex-col items-center gap-2">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setVisibleCount((c) => c + GALLERY_PAGE_SIZE)}
@@ -1688,7 +1715,8 @@ export default function App() {
                   <span className="font-mono text-[10px] tracking-[0.16em] text-slate-500">
                     SHOWING {visibleClips.length} OF {filtered.length} FILTERED CLIPS
                   </span>
-                </div>
+                  </div>
+                </>
               )}
             </section>
           </div>
