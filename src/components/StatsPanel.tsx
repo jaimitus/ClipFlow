@@ -10,18 +10,16 @@ function StatBox({
   label,
   value,
   sub,
-  accent = "text-slate-100",
 }: {
   label: string;
   value: string;
   sub?: string;
-  accent?: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-black/25 px-3 py-2.5">
-      <div className="font-mono text-[9px] tracking-[0.18em] text-slate-600">{label}</div>
-      <div className={`mt-1 font-mono text-[15px] font-semibold ${accent}`}>{value}</div>
-      {sub && <div className="mt-0.5 font-mono text-[10px] text-slate-500">{sub}</div>}
+    <div className="rounded-lg border border-[#232934] bg-[#14171e] px-3.5 py-3">
+      <div className="font-mono text-[10px] font-medium uppercase tracking-wider text-[#7e8b9d]">{label}</div>
+      <div className="mt-1 font-mono text-[17px] font-semibold text-[#e6eaf0]">{value}</div>
+      {sub && <div className="mt-1 text-[11px] text-[#717d8e]">{sub}</div>}
     </div>
   );
 }
@@ -53,12 +51,12 @@ export default function StatsPanel({ clips }: Props) {
   }, [clips, weekAgo]);
 
   return (
-    <section className="panel rounded-2xl p-4">
-      <h3 className="font-mono text-[11px] tracking-[0.24em] text-cyan-300">
-        CLIP STATS
+    <section className="panel rounded-xl p-4">
+      <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
+        CLIP STATISTICS
       </h3>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3.5 grid grid-cols-2 gap-2.5">
         <StatBox
           label="TOTAL CLIPS"
           value={String(clips.length)}
@@ -67,45 +65,43 @@ export default function StatsPanel({ clips }: Props) {
         <StatBox
           label="STORAGE USED"
           value={formatBytes(stats.totalBytes)}
-          sub="in the output folder"
+          sub="output directory"
         />
         <StatBox
           label="THIS WEEK"
           value={String(stats.thisWeek)}
           sub={formatBytes(stats.thisWeekBytes)}
-          accent="text-lime-300"
         />
         <StatBox
           label="GAMES TAGGED"
           value={String(stats.rows.filter((r) => r.game !== "General").length)}
-          sub="clips organised by game"
-          accent="text-fuchsia-300"
+          sub="per-game subfolders"
         />
       </div>
 
-      <div className="mt-4 border-t border-white/5 pt-3">
-        <div className="font-mono text-[10px] tracking-[0.2em] text-slate-500">
-          BY GAME
+      <div className="mt-4 border-t border-[#232934] pt-3.5">
+        <div className="font-mono text-[10px] font-medium uppercase tracking-wider text-[#7e8b9d]">
+          STORAGE BY GAME
         </div>
         {stats.rows.length === 0 ? (
-          <p className="mt-2 text-[12px] text-slate-500">
-            No clips yet — the stats populate after your first Alt+C.
+          <p className="mt-2 text-[12px] text-[#717d8e]">
+            No clips recorded yet. Storage breakdown appears after saving your first clip.
           </p>
         ) : (
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-2.5 space-y-2.5">
             {stats.rows.map((r) => (
               <li key={r.game}>
-                <div className="flex items-center justify-between font-mono text-[10px]">
-                  <span className="truncate uppercase tracking-[0.14em] text-slate-300">
-                    {r.game}
+                <div className="flex items-center justify-between font-mono text-[11px]">
+                  <span className="truncate font-medium text-[#d4dae3]">
+                    {r.game.toUpperCase()}
                   </span>
-                  <span className="shrink-0 text-slate-500">
+                  <span className="shrink-0 text-[#7e8b9d]">
                     {r.clips} clip{r.clips === 1 ? "" : "s"} · {formatBytes(r.bytes)}
                   </span>
                 </div>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/40">
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#11141a]">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-fuchsia-500"
+                    className="h-full rounded-full bg-blue-500"
                     style={{ width: `${(r.bytes / stats.maxBytes) * 100}%` }}
                   />
                 </div>
@@ -115,9 +111,8 @@ export default function StatsPanel({ clips }: Props) {
         )}
       </div>
 
-      <p className="mt-3 text-[10px] leading-relaxed text-slate-600">
-        Clips saved with per-game organisation on are tagged by their folder
-        (Videos/ClipFlow/&lt;game&gt;/). Clips at the root count as General.
+      <p className="mt-4 text-[11px] leading-relaxed text-[#687383]">
+        Clips saved with game organization active are saved into Videos/ClipFlow/&lt;game&gt;/ folders.
       </p>
     </section>
   );

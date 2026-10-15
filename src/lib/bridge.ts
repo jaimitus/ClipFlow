@@ -10,6 +10,7 @@
 import { simEngine } from "./simEngine";
 import type {
   AppSettings,
+  AudioDevice,
   CaptureProfile,
   ClipMetadata,
   ClipSavedPayload,
@@ -172,6 +173,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   privacyPauseWhenUnfocused: false,
   gameVolume: 100,
   micVolume: 100,
+  micDeviceId: null,
   adaptiveEco: false,
   ecoBatteryThresholdPct: 30,
   ecoRamFreeGbs: 4,
@@ -674,6 +676,16 @@ export const clipflow = {
         primary: false,
         adapter: "Simulated RTX Adapter",
       },
+    ];
+  },
+
+  async getAudioInputDevices(): Promise<AudioDevice[]> {
+    if (isTauri()) return invoke<AudioDevice[]>("get_audio_input_devices");
+    return [
+      { id: "default", name: "Default (System Default)", isDefault: true },
+      { id: "mock_wo_mic", name: "Microphone (WO Mic Device)", isDefault: false },
+      { id: "mock_realtek", name: "Microphone (Realtek(R) Audio)", isDefault: false },
+      { id: "mock_array", name: "Microphone Array (Intel® Smart Sound)", isDefault: true },
     ];
   },
 

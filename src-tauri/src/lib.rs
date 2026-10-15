@@ -246,6 +246,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::get_monitors,
+            commands::get_audio_input_devices,
             commands::get_output_dir,
             commands::get_foreground_game,
             commands::get_profiles,

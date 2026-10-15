@@ -19,11 +19,27 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::recorder::{EncodedPacket, RecorderError, RollingRingBuffer, TrackKind, HNS_PER_SECOND};
+use super::recorder::{
+    EncodedPacket, QpcClock, RecorderError, RollingRingBuffer, TrackKind, HNS_PER_SECOND,
+};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
 
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
 pub const AAC_BYTES_PER_SECOND: u32 = 24_000; // 192 kbit/s stereo
+
+pub fn enumerate_audio_devices() -> Vec<AudioDevice> {
+    imp::enumerate_audio_devices()
+}
 
 pub struct AudioCapture {
     stop: Arc<AtomicBool>,
@@ -39,9 +55,11 @@ impl AudioCapture {
         mic: bool,
         game_gain: Arc<AtomicU32>,
         mic_gain: Arc<AtomicU32>,
+        mic_device: Arc<parking_lot::RwLock<Option<String>>>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
         status: Arc<Mutex<Option<String>>>,
+        clock: Arc<QpcClock>,
     ) -> Result<Self, RecorderError> {
         let stop = Arc::new(AtomicBool::new(false));
         let mut handles = Vec::new();
@@ -50,13 +68,15 @@ impl AudioCapture {
             let stop_c = Arc::clone(&stop);
             let gg_c = Arc::clone(&game_gain);
             let mg_c = Arc::clone(&mic_gain);
+            let md_c = Arc::clone(&mic_device);
             let ring_c = Arc::clone(&ring);
             let gen_c = Arc::clone(&generation);
             let status_c = Arc::clone(&status);
+            let clock_c = Arc::clone(&clock);
             let h = std::thread::Builder::new()
                 .name("clipflow-audio".into())
                 .spawn(move || {
-                    imp::run(system, mic, gg_c, mg_c, stop_c, ring_c, gen_c, status_c);
+                    imp::run(system, mic, gg_c, mg_c, md_c, stop_c, ring_c, gen_c, status_c, clock_c);
                 })
                 .map_err(|e| RecorderError::Other(format!("audio thread: {e}")))?;
             handles.push(h);
@@ -86,36 +106,105 @@ mod imp {
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
         COINIT_MULTITHREADED,
     };
-    use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+
+    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+
+    const PKEY_DEVICE_FRIENDLY_NAME: PROPERTYKEY = PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
+        pid: 14,
+    };
+
+    #[allow(dead_code)]
+    pub(super) fn enumerate_audio_devices() -> Vec<AudioDevice> {
+        let mut devices = Vec::new();
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let enumerator: IMMDeviceEnumerator = match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                Ok(e) => e,
+                Err(_) => return devices,
+            };
+
+            let default_id = enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .ok()
+                .and_then(|d| d.GetId().ok())
+                .map(|pw| pw.to_string().unwrap_or_default());
+
+            let collection = match enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE) {
+                Ok(c) => c,
+                Err(_) => return devices,
+            };
+
+            let count = collection.GetCount().unwrap_or(0);
+            for i in 0..count {
+                if let Ok(device) = collection.Item(i) {
+                    let id = match device.GetId() {
+                        Ok(pw) => pw.to_string().unwrap_or_default(),
+                        Err(_) => continue,
+                    };
+                    let name = device
+                        .OpenPropertyStore(windows::Win32::System::Com::STGM(0))
+                        .ok()
+                        .and_then(|store| store.GetValue(&PKEY_DEVICE_FRIENDLY_NAME).ok())
+                        .map(|pv| pv.to_string())
+                        .unwrap_or_else(|| "Unknown Microphone".to_string());
+
+                    let is_default = default_id.as_deref() == Some(&id);
+                    devices.push(AudioDevice {
+                        id,
+                        name,
+                        is_default,
+                    });
+                }
+            }
+        }
+        devices
+    }
 
     const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: windows::core::GUID =
         windows::core::GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
 
-    struct Endpoint {
-        client: IAudioClient,
-        capture: IAudioCaptureClient,
-        channels: u32,
-        _rate: u32,
-        float: bool,
-        bits: u32,
+    pub(super) struct Endpoint {
+        pub(super) client: IAudioClient,
+        pub(super) capture: IAudioCaptureClient,
+        pub(super) channels: u32,
+        pub(super) rate: u32,
+        pub(super) float: bool,
+        pub(super) bits: u32,
+        pub(super) resample_phase: f64,
+        pub(super) temp_stereo: Vec<f32>,
     }
 
-    unsafe fn open_endpoint(loopback: bool) -> windows::core::Result<Endpoint> {
+    pub(super) unsafe fn open_endpoint(loopback: bool, device_id: Option<&str>) -> windows::core::Result<Endpoint> {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = enumerator.GetDefaultAudioEndpoint(
-            if loopback { eRender } else { eCapture },
-            eConsole,
-        )?;
+        let device = if loopback {
+            enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?
+        } else if let Some(id) = device_id.filter(|s| !s.is_empty() && *s != "default") {
+            let hstring = windows::core::HSTRING::from(id);
+            match enumerator.GetDevice(&hstring) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("[clipflow::audio] specific capture device '{id}' not found ({e}), falling back to default");
+                    enumerator
+                        .GetDefaultAudioEndpoint(eCapture, eConsole)
+                        .or_else(|_| enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications))?
+                }
+            }
+        } else {
+            enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .or_else(|_| enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications))?
+        };
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         let mix = client.GetMixFormat()?;
         let wf = &*mix;
 
-        let mut flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
-        if loopback {
-            // Loopback streams cannot be event driven on all drivers; poll them.
-            flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
-        }
+        let flags = if loopback {
+            AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+        } else {
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+        };
 
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
@@ -147,38 +236,74 @@ mod imp {
             client,
             capture,
             channels,
-            _rate: rate,
+            rate,
             float,
             bits,
+            resample_phase: 0.0,
+            temp_stereo: Vec::new(),
         })
     }
 
-    unsafe fn drain_endpoint(ep: &Endpoint, out: &mut Vec<f32>, qpc_first: &mut Option<i64>) {
+    /// Resamples stereo interleaved float buffer from `in_rate` to `out_rate`.
+    fn resample_stereo(
+        src: &[f32],
+        in_rate: u32,
+        out_rate: u32,
+        phase: &mut f64,
+        out: &mut Vec<f32>,
+    ) {
+        if in_rate == out_rate || src.is_empty() {
+            out.extend_from_slice(src);
+            return;
+        }
+        let in_frames = src.len() / 2;
+        if in_frames <= 1 {
+            return;
+        }
+        let ratio = in_rate as f64 / out_rate as f64;
+        let mut p = *phase;
+        while p < (in_frames - 1) as f64 {
+            let idx = p as usize;
+            let frac = (p - idx as f64) as f32;
+            let i0 = idx * 2;
+            let i1 = (idx + 1) * 2;
+            let l0 = src[i0];
+            let r0 = src[i0 + 1];
+            let l1 = src[i1];
+            let r1 = src[i1 + 1];
+            out.push(l0 + (l1 - l0) * frac);
+            out.push(r0 + (r1 - r0) * frac);
+            p += ratio;
+        }
+        *phase = (p - in_frames as f64).max(0.0);
+    }
+
+    unsafe fn drain_endpoint(ep: &mut Endpoint, out: &mut Vec<f32>, qpc_first: &mut Option<i64>) -> bool {
         loop {
             let packet = match ep.capture.GetNextPacketSize() {
                 Ok(p) => p,
-                Err(_) => return,
+                Err(e) => {
+                    log::warn!("[clipflow::audio] GetNextPacketSize failed (device may be reset/disconnected): {e}");
+                    return false;
+                }
             };
             if packet == 0 {
-                return;
+                return true;
             }
             let mut data: *mut u8 = std::ptr::null_mut();
             let mut frames = 0u32;
             let mut flags = 0u32;
             let mut dev_pos = 0u64;
             let mut qpc = 0u64;
-            if ep
-                .capture
-                .GetBuffer(
-                    &mut data,
-                    &mut frames,
-                    &mut flags,
-                    Some(&mut dev_pos),
-                    Some(&mut qpc),
-                )
-                .is_err()
-            {
-                return;
+            if let Err(e) = ep.capture.GetBuffer(
+                &mut data,
+                &mut frames,
+                &mut flags,
+                Some(&mut dev_pos),
+                Some(&mut qpc),
+            ) {
+                log::warn!("[clipflow::audio] GetBuffer failed: {e}");
+                return false;
             }
             if qpc_first.is_none() && qpc != 0 {
                 *qpc_first = Some(qpc as i64);
@@ -186,17 +311,35 @@ mod imp {
 
             let silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
             let n = frames as usize * ep.channels as usize;
-            if silent || data.is_null() {
-                out.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
-            } else if ep.float {
-                let src = std::slice::from_raw_parts(data as *const f32, n);
-                downmix(src, ep.channels, out);
-            } else if ep.bits == 16 {
-                let src = std::slice::from_raw_parts(data as *const i16, n);
-                let tmp: Vec<f32> = src.iter().map(|s| *s as f32 / 32768.0).collect();
-                downmix(&tmp, ep.channels, out);
+
+            if ep.rate == SAMPLE_RATE {
+                if silent || data.is_null() {
+                    out.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
+                } else if ep.float {
+                    let src = std::slice::from_raw_parts(data as *const f32, n);
+                    downmix(src, ep.channels, out);
+                } else if ep.bits == 16 {
+                    let src = std::slice::from_raw_parts(data as *const i16, n);
+                    let tmp: Vec<f32> = src.iter().map(|s| *s as f32 / 32768.0).collect();
+                    downmix(&tmp, ep.channels, out);
+                } else {
+                    out.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
+                }
             } else {
-                out.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
+                ep.temp_stereo.clear();
+                if silent || data.is_null() {
+                    ep.temp_stereo.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
+                } else if ep.float {
+                    let src = std::slice::from_raw_parts(data as *const f32, n);
+                    downmix(src, ep.channels, &mut ep.temp_stereo);
+                } else if ep.bits == 16 {
+                    let src = std::slice::from_raw_parts(data as *const i16, n);
+                    let tmp: Vec<f32> = src.iter().map(|s| *s as f32 / 32768.0).collect();
+                    downmix(&tmp, ep.channels, &mut ep.temp_stereo);
+                } else {
+                    ep.temp_stereo.extend(std::iter::repeat(0.0).take(frames as usize * CHANNELS as usize));
+                }
+                resample_stereo(&ep.temp_stereo, ep.rate, SAMPLE_RATE, &mut ep.resample_phase, out);
             }
             let _ = ep.capture.ReleaseBuffer(frames);
         }
@@ -333,9 +476,10 @@ mod imp {
     /// already carries the human-readable reason).
     unsafe fn open_reported(
         loopback: bool,
+        device_id: Option<&str>,
         status: &Mutex<Option<String>>,
     ) -> Result<Option<Endpoint>, ()> {
-        match open_endpoint(loopback) {
+        match open_endpoint(loopback, device_id) {
             Ok(ep) => Ok(Some(ep)),
             Err(e) => {
                 let msg = if loopback {
@@ -355,10 +499,12 @@ mod imp {
         mic: bool,
         game_gain: Arc<AtomicU32>,
         mic_gain: Arc<AtomicU32>,
+        mic_device: Arc<parking_lot::RwLock<Option<String>>>,
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
         status: Arc<Mutex<Option<String>>>,
+        clock: Arc<QpcClock>,
     ) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -368,45 +514,48 @@ mod imp {
                 return;
             }
 
-            // Loopback + the AAC encoder are both *retried* forever: a game
-            // holding the render device in exclusive mode makes the very first
-            // `Initialize` fail with AUDCLNT_E_DEVICE_IN_USE (0x8889000A), and
-            // the AAC MFT can briefly be contended on system wake. ClipFlow
-            // must keep the buffer armed with video while audio sorts itself
-            // out, then join seamlessly — never silently produce audio-less
-            // clips for the whole session.
             let mut loopback: Option<Endpoint> = None;
             let mut microphone: Option<Endpoint> = None;
             let mut encoder: Option<AacEncoder> = None;
             let mut last_attempt = std::time::Instant::now();
+            let mut current_mic_id = mic_device.read().clone();
 
-            let mut freq = 0i64;
-            let _ = QueryPerformanceFrequency(&mut freq);
-            let mut origin = 0i64;
-            let _ = QueryPerformanceCounter(&mut origin);
-            let freq = if freq == 0 { HNS_PER_SECOND } else { freq };
-
-            // AAC-LC frames are 1024 samples; feed the MFT in exact multiples.
+            // AAC-LC frames are 1024 samples per channel; feed the MFT in exact multiples.
             const FRAME_SAMPLES: usize = 1024 * CHANNELS as usize;
-            let mut pending: Vec<f32> = Vec::with_capacity(FRAME_SAMPLES * 8);
+            let frame_duration_hns: i64 = (1024 * HNS_PER_SECOND) / SAMPLE_RATE as i64;
+
+            let mut sys_pending: Vec<f32> = Vec::with_capacity(FRAME_SAMPLES * 8);
             let mut mic_pending: Vec<f32> = Vec::with_capacity(FRAME_SAMPLES * 8);
+            let mut mixed_pending: Vec<f32> = Vec::with_capacity(FRAME_SAMPLES * 8);
             let mut pcm = Vec::<i16>::with_capacity(FRAME_SAMPLES);
-            let mut samples_written: i64 = 0;
             let mut qpc_first: Option<i64> = None;
 
+            // Audio PTS matches clock time directly.
+            let mut next_pts = clock.now_hns();
+
             while !stop.load(Ordering::Acquire) {
-                // (Re)open endpoints every second until the device is free.
+                // If the selected microphone device changes live, switch immediately.
+                let requested_mic_id = mic_device.read().clone();
+                if requested_mic_id != current_mic_id {
+                    current_mic_id = requested_mic_id;
+                    if let Some(ep) = microphone.take() {
+                        let _ = ep.client.Stop();
+                    }
+                    last_attempt = std::time::Instant::now() - std::time::Duration::from_secs(2);
+                }
+
+                // (Re)open endpoints every second if closed or invalidated.
                 if last_attempt.elapsed() >= std::time::Duration::from_secs(1) {
                     last_attempt = std::time::Instant::now();
                     if system && loopback.is_none() {
-                        match open_reported(true, &status) {
+                        match open_reported(true, None, &status) {
                             Ok(Some(ep)) => loopback = Some(ep),
                             Ok(None) => {}
                             Err(()) => {}
                         }
                     }
                     if mic && microphone.is_none() {
-                        match open_reported(false, &status) {
+                        match open_reported(false, current_mic_id.as_deref(), &status) {
                             Ok(Some(ep)) => microphone = Some(ep),
                             Ok(None) => {}
                             Err(()) => {}
@@ -428,81 +577,116 @@ mod imp {
                 }
 
                 if loopback.is_none() && microphone.is_none() {
-                    // Nothing captured yet (device busy). Keep the thread alive
-                    // and keep retrying; the video side is unaffected.
+                    // Nothing captured yet (device busy). Keep next_pts tracking live wall-clock
+                    // so when devices arrive, audio does not start at t=0.
+                    next_pts = clock.now_hns();
                     std::thread::sleep(std::time::Duration::from_millis(8));
                     continue;
                 }
 
-                let loopback_before = pending.len();
-                if let Some(ep) = loopback.as_ref() {
-                    drain_endpoint(ep, &mut pending, &mut qpc_first);
+                let sys_start_idx = sys_pending.len();
+                if let Some(ep) = loopback.as_mut() {
+                    if !drain_endpoint(ep, &mut sys_pending, &mut qpc_first) {
+                        loopback = None;
+                    }
                 }
-                let mic_before = mic_pending.len();
-                if let Some(ep) = microphone.as_ref() {
-                    drain_endpoint(ep, &mut mic_pending, &mut qpc_first);
+                let mic_start_idx = mic_pending.len();
+                if let Some(ep) = microphone.as_mut() {
+                    if !drain_endpoint(ep, &mut mic_pending, &mut qpc_first) {
+                        microphone = None;
+                    }
                 }
 
-                // Apply the mix balance to the samples captured *this* loop
-                // only, so gains change live without ever scaling an
-                // already-captured batch twice (and without leaving the tail
-                // of a batch ungained). At 100 % the loops are no-ops and the
-                // output is byte-identical to the original fixed mix.
+                // Apply live volume gains to newly drained samples
                 let gg = game_gain.load(Ordering::Acquire) as f32 * 0.001;
                 let mg = mic_gain.load(Ordering::Acquire) as f32 * 0.001;
-                if gg != 1.0 && pending.len() > loopback_before {
-                    for s in pending.iter_mut().skip(loopback_before) {
+                if gg != 1.0 && sys_pending.len() > sys_start_idx {
+                    for s in sys_pending.iter_mut().skip(sys_start_idx) {
                         *s = (*s * gg).clamp(-1.0, 1.0);
                     }
                 }
-                if mg != 1.0 && mic_pending.len() > mic_before {
-                    for s in mic_pending.iter_mut().skip(mic_before) {
+                if mg != 1.0 && mic_pending.len() > mic_start_idx {
+                    for s in mic_pending.iter_mut().skip(mic_start_idx) {
                         *s = (*s * mg).clamp(-1.0, 1.0);
                     }
                 }
 
-                // Mix the mic in, sample-aligned, -3 dB per source — the same
-                // pad as the original fixed mix; user volumes already rode on
-                // top of the samples above.
-                if !mic_pending.is_empty() {
-                    if loopback.is_none() {
-                        pending.append(&mut mic_pending);
-                    } else {
-                        let n = pending.len().min(mic_pending.len());
-                        for i in 0..n {
-                            pending[i] = (pending[i] * 0.707 + mic_pending[i] * 0.707)
-                                .clamp(-1.0, 1.0);
+                // Mix available samples into mixed_pending.
+                // - If both are enabled, mix them together with -3dB headroom.
+                // - If one source has samples but the other is silent/empty, pad the silent one
+                //   with silence so neither the game audio nor the mic is EVER starved or dropped!
+                if system && mic {
+                    let common = sys_pending.len().min(mic_pending.len());
+                    for i in 0..common {
+                        mixed_pending.push((sys_pending[i] * 0.707 + mic_pending[i] * 0.707).clamp(-1.0, 1.0));
+                    }
+                    sys_pending.drain(..common);
+                    mic_pending.drain(..common);
+
+                    // If mic has excess samples (e.g. game is quiet / loopback gave 0 packets):
+                    // Mix mic over silence so the mic is never dropped!
+                    if sys_pending.is_empty() && mic_pending.len() >= FRAME_SAMPLES {
+                        let take = (mic_pending.len() / FRAME_SAMPLES) * FRAME_SAMPLES;
+                        for s in mic_pending.drain(..take) {
+                            mixed_pending.push((s * 0.707).clamp(-1.0, 1.0));
                         }
-                        mic_pending.drain(..n);
-                        if mic_pending.len() > FRAME_SAMPLES * 16 {
-                            mic_pending.clear(); // mic ran away: resync
+                    }
+                    // If system has excess samples (e.g. user is not speaking into mic):
+                    if mic_pending.is_empty() && sys_pending.len() >= FRAME_SAMPLES {
+                        let take = (sys_pending.len() / FRAME_SAMPLES) * FRAME_SAMPLES;
+                        for s in sys_pending.drain(..take) {
+                            mixed_pending.push((s * 0.707).clamp(-1.0, 1.0));
+                        }
+                    }
+                } else if system {
+                    mixed_pending.append(&mut sys_pending);
+                } else if mic {
+                    mixed_pending.append(&mut mic_pending);
+                }
+
+                let now_hns = clock.now_hns();
+
+                // If elapsed time has outpaced audio samples (e.g. the game is silent so
+                // loopback produced 0 packets, and nobody is speaking into the mic):
+                // Inject silence so audio PTS NEVER freezes and stays in sync with video!
+                if now_hns > next_pts + frame_duration_hns && mixed_pending.len() < FRAME_SAMPLES {
+                    // Detect massive sleep/wake jump (> 2 seconds behind):
+                    if now_hns - next_pts > HNS_PER_SECOND * 2 {
+                        next_pts = now_hns;
+                        mixed_pending.clear();
+                    } else {
+                        while now_hns > next_pts + frame_duration_hns && mixed_pending.len() < FRAME_SAMPLES * 4 {
+                            mixed_pending.extend(std::iter::repeat(0.0f32).take(FRAME_SAMPLES));
                         }
                     }
                 }
 
+                // Cap the queues so runaway buffers cannot grow indefinitely
+                if sys_pending.len() > FRAME_SAMPLES * 16 {
+                    sys_pending.drain(..sys_pending.len() - FRAME_SAMPLES * 16);
+                }
+                if mic_pending.len() > FRAME_SAMPLES * 16 {
+                    mic_pending.drain(..mic_pending.len() - FRAME_SAMPLES * 16);
+                }
+                if mixed_pending.len() > FRAME_SAMPLES * 32 {
+                    mixed_pending.drain(..mixed_pending.len() - FRAME_SAMPLES * 32);
+                }
+
                 let Some(enc) = encoder.as_ref() else {
-                    // Encoder not ready: cap the pending queue so a stalled AAC
-                    // MFT cannot grow the loopback history without bound.
-                    if pending.len() > FRAME_SAMPLES * 16 {
-                        pending.drain(..pending.len() - FRAME_SAMPLES * 16);
-                    }
                     std::thread::sleep(std::time::Duration::from_millis(8));
                     continue;
                 };
 
-                let epoch = qpc_first.unwrap_or(origin);
-                while pending.len() >= FRAME_SAMPLES {
+                while mixed_pending.len() >= FRAME_SAMPLES {
                     pcm.clear();
                     pcm.extend(
-                        pending
+                        mixed_pending
                             .drain(..FRAME_SAMPLES)
                             .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16),
                     );
 
-                    let pts = ((epoch - origin) as i128 * HNS_PER_SECOND as i128 / freq as i128)
-                        as i64
-                        + samples_written * HNS_PER_SECOND / SAMPLE_RATE as i64;
-                    samples_written += 1024;
+                    let pts = next_pts;
+                    next_pts += frame_duration_hns;
 
                     let gen = generation.load(Ordering::Acquire);
                     let ring_ref = &ring;
@@ -541,15 +725,32 @@ mod imp {
 mod imp {
     use super::*;
 
+    pub(super) fn enumerate_audio_devices() -> Vec<AudioDevice> {
+        vec![
+            AudioDevice {
+                id: "default".into(),
+                name: "Default Microphone (Simulated)".into(),
+                is_default: true,
+            },
+            AudioDevice {
+                id: "headset_mic".into(),
+                name: "Headset Microphone (Simulated)".into(),
+                is_default: false,
+            },
+        ]
+    }
+
     pub(super) fn run(
         _system: bool,
         _mic: bool,
         _game_gain: Arc<AtomicU32>,
         _mic_gain: Arc<AtomicU32>,
+        _mic_device: Arc<parking_lot::RwLock<Option<String>>>,
         stop: Arc<AtomicBool>,
         ring: Arc<Mutex<RollingRingBuffer>>,
         generation: Arc<AtomicU32>,
         _status: Arc<Mutex<Option<String>>>,
+        _clock: Arc<QpcClock>,
     ) {
         // 21.3 ms AAC frames of silence keep the muxer path exercised.
         let frame_hns = 1024 * HNS_PER_SECOND / SAMPLE_RATE as i64;
@@ -568,3 +769,25 @@ mod imp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn test_enum_mic() {
+        let devices = imp::enumerate_audio_devices();
+        println!("Enumerated audio devices: {:#?}", devices);
+        unsafe {
+            for dev in &devices {
+                let ep = imp::open_endpoint(false, Some(&dev.id));
+                match ep {
+                    Ok(e) => println!("Successfully opened {}: channels={}, rate={}, float={}, bits={}", dev.name, e.channels, e.rate, e.float, e.bits),
+                    Err(err) => println!("Failed to open {}: {:?}", dev.name, err),
+                }
+            }
+        }
+    }
+}
+

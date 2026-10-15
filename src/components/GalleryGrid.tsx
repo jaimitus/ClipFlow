@@ -13,11 +13,9 @@ import { gapFor, useVirtualGrid } from "../hooks/useVirtualGrid";
  */
 const thumbCache = new Map<string, string>();
 
-/** LRU cap so scrolling through thousands of clips can't balloon memory. */
+/** LRU cap so scrolling through thousands of clips cannot balloon memory. */
 const THUMB_CACHE_MAX = 400;
 function cacheThumb(path: string, t: string) {
-  // Map preserves insertion order — re-inserting refreshes recency, and the
-  // oldest entry is evicted first when the budget is exceeded.
   if (thumbCache.has(path)) thumbCache.delete(path);
   thumbCache.set(path, t);
   if (thumbCache.size > THUMB_CACHE_MAX) {
@@ -44,47 +42,37 @@ interface Props {
 }
 
 function IconButton({
-  label,
   title,
   onClick,
-  tone = "cyan",
+  danger,
+  highlight,
+  children,
 }: {
-  label: string;
   title: string;
   onClick: (e: React.MouseEvent) => void;
-  tone?: "cyan" | "magenta" | "rose" | "slate";
+  danger?: boolean;
+  highlight?: boolean;
+  children: React.ReactNode;
 }) {
-  const tones = {
-    cyan: "hover:border-cyan-300/60 hover:text-cyan-200",
-    magenta: "hover:border-fuchsia-300/60 hover:text-fuchsia-200",
-    rose: "hover:border-rose-400/60 hover:text-rose-300",
-    slate: "hover:border-white/30 hover:text-slate-100",
-  } as const;
   return (
     <button
+      type="button"
       title={title}
       onClick={onClick}
       className={cn(
-        "grid h-7 w-7 place-items-center rounded-md border border-white/12 bg-black/60 text-[11px] text-slate-300 backdrop-blur transition",
-        tones[tone],
+        "grid h-7 w-7 place-items-center rounded-md border text-[11px] backdrop-blur-sm transition-colors duration-150",
+        danger
+          ? "border-red-500/30 bg-[#161a22]/90 text-red-300 hover:border-red-400/60 hover:bg-red-500/20"
+          : highlight
+            ? "border-amber-400/40 bg-[#161a22]/90 text-amber-300 hover:border-amber-400/70 hover:bg-amber-400/20"
+            : "border-[#343e4f] bg-[#161a22]/90 text-[#b5c0d0] hover:border-blue-400/60 hover:bg-[#1f2633] hover:text-white",
       )}
     >
-      {label}
+      {children}
     </button>
   );
 }
 
-/**
- * Plays the clip inline on hover, exactly like the native gallery does.
- *
- * Memoised: App passes stable useCallback handlers and `clips` comes from a
- * `useMemo`, so a card only re-renders when its own clip (or `compact`)
- * actually changes — not on the 2 s stats poll or toast churn.
- *
- * The footer reserves a fixed tag line so every card in a row has the exact
- * same height — that's what lets the virtualised grid place rows at a uniform
- * pitch without overlap.
- */
 const ClipCard = memo(function ClipCard({
   clip,
   compact,
@@ -115,9 +103,6 @@ const ClipCard = memo(function ClipCard({
   const [thumb, setThumb] = useState(clip.thumbnail);
   const src = clip.preview_url ?? assetUrl(clip.path);
 
-  // Lazy thumbnail: the card only mounts when it is (near) visible thanks to
-  // the virtualised grid, so requesting here means thumbnails decode on scroll
-  // — never thousands up front. Cached per path so re-scans are free.
   useEffect(() => {
     if (clip.thumbnail) {
       setThumb(clip.thumbnail);
@@ -142,7 +127,6 @@ const ClipCard = memo(function ClipCard({
     };
   }, [clip.path, clip.thumbnail]);
 
-  // Stable handlers: the hover closures are re-created once instead of every render.
   const handleMouseEnter = useCallback(() => {
     setHovering(true);
     const v = videoRef.current;
@@ -157,8 +141,6 @@ const ClipCard = memo(function ClipCard({
     videoRef.current?.pause();
   }, []);
 
-  // Primary click: in select mode (or with a keyboard modifier) the card
-  // selects; otherwise it opens the trimmer, exactly as before.
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       const mods = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
@@ -174,14 +156,17 @@ const ClipCard = memo(function ClipCard({
   return (
     <article
       className={cn(
-        "panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl transition-colors",
-        selected && "border-cyan-300/70 ring-2 ring-cyan-300/60",
+        "panel panel-hover group relative cursor-pointer overflow-hidden rounded-xl transition-all duration-150",
+        selected
+          ? "border-blue-500 ring-2 ring-blue-500/40 bg-[#1a202a]"
+          : "hover:border-[#384354]",
       )}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <div className="relative aspect-video w-full overflow-hidden bg-black">
+      {/* Thumbnail / Video Preview Viewport */}
+      <div className="relative aspect-video w-full overflow-hidden bg-[#0c0e13]">
         {thumb ? (
           <img
             src={thumb}
@@ -189,15 +174,13 @@ const ClipCard = memo(function ClipCard({
             loading="lazy"
             decoding="async"
             className={cn(
-              "h-full w-full object-cover transition duration-300",
-              hovering ? "scale-105 opacity-0" : "opacity-100",
+              "h-full w-full object-cover transition-opacity duration-200",
+              hovering ? "opacity-0" : "opacity-100",
             )}
           />
         ) : (
-          <div className="bg-grid absolute inset-0 grid place-items-center bg-[#080b16]">
-            <span className="animate-pulse font-mono text-[10px] tracking-[0.2em] text-slate-600">
-              LOADING THUMBNAIL…
-            </span>
+          <div className="absolute inset-0 grid place-items-center bg-[#13161c]">
+            <span className="font-mono text-[10px] text-[#5d6878]">DECODING FRAME…</span>
           </div>
         )}
 
@@ -210,121 +193,148 @@ const ClipCard = memo(function ClipCard({
             playsInline
             preload="none"
             className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+              "absolute inset-0 h-full w-full object-cover transition-opacity duration-200",
               hovering ? "opacity-100" : "opacity-0",
             )}
           />
         )}
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#05060d] via-transparent to-transparent" />
+        {/* Readability scrim */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0e1117]/90 via-transparent to-transparent" />
 
+        {/* Game badge */}
         {clip.game && (
-          <span className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-lime-200">
+          <span className="absolute left-2.5 top-2.5 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide text-white border border-white/10">
             {clip.game.toUpperCase()}
           </span>
         )}
 
-        <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-cyan-200">
+        {/* Duration badge */}
+        <span className="absolute bottom-2 left-2.5 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#e6eaf0] border border-white/10">
           {formatDuration(clip.duration_seconds)}
         </span>
-        <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-slate-300">
+
+        {/* Format / resolution badge */}
+        <span className="absolute bottom-2 right-2.5 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] text-[#9ba6b6] border border-white/10">
           {clip.height}p{clip.fps}
         </span>
 
+        {/* Favorite indicator */}
         {clip.favorite && (
-          <span className="absolute left-2 top-8 rounded bg-amber-400/90 px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wide text-black">
+          <span
+            className="absolute left-2.5 top-8 rounded bg-amber-500/90 px-1.5 py-0.5 font-mono text-[9px] font-bold text-black"
+            title="Favorited clip"
+          >
             ★
           </span>
         )}
 
+        {/* Action button overlay */}
         <div
           className={cn(
-            "absolute right-2 top-2 flex gap-1.5 transition",
+            "absolute right-2 top-2 flex items-center gap-1 transition-opacity duration-150",
             selectMode ? "opacity-100" : "opacity-0 group-hover:opacity-100",
           )}
         >
           {(selectMode || selected) && (
             <IconButton
-              label={selected ? "✓" : "☐"}
               title={selected ? "Deselect clip" : "Select clip"}
-              tone="slate"
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(clip, { ctrl: true, shift: false });
               }}
-            />
+            >
+              <span className="font-mono text-[12px]">{selected ? "✓" : "☐"}</span>
+            </IconButton>
           )}
+
           <IconButton
-            label={clip.favorite ? "★" : "☆"}
-            title={clip.favorite ? "Remove from favourites" : "Add to favourites"}
-            tone="slate"
+            title={clip.favorite ? "Remove from favorites" : "Add to favorites"}
+            highlight={clip.favorite}
             onClick={(e) => {
               e.stopPropagation();
               onToggleFavorite(clip);
             }}
-          />
+          >
+            <span>{clip.favorite ? "★" : "☆"}</span>
+          </IconButton>
+
           <IconButton
-            label="▶"
             title="Open in external player"
-            tone="slate"
             onClick={(e) => {
               e.stopPropagation();
               onOpenExternal(clip);
             }}
-          />
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3 fill-current">
+              <path d="M4 3.5v9l8-4.5-8-4.5z" />
+            </svg>
+          </IconButton>
+
           <IconButton
-            label="⧉"
-            title="Copy video to clipboard"
-            tone="magenta"
+            title="Copy video file to clipboard"
             onClick={(e) => {
               e.stopPropagation();
               onCopy(clip);
             }}
-          />
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3 fill-none stroke-current" strokeWidth="1.5">
+              <rect x="5" y="5" width="8" height="8" rx="1.5" />
+              <path d="M3 11V3a1 1 0 0 1 1-1h8" />
+            </svg>
+          </IconButton>
+
           <IconButton
-            label="⌕"
             title="Reveal in Explorer"
-            tone="cyan"
             onClick={(e) => {
               e.stopPropagation();
               onReveal(clip);
             }}
-          />
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3 fill-none stroke-current" strokeWidth="1.5">
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" />
+            </svg>
+          </IconButton>
+
           <IconButton
-            label="✕"
             title="Delete clip"
-            tone="rose"
+            danger
             onClick={(e) => {
               e.stopPropagation();
               onDelete(clip);
             }}
-          />
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3 fill-none stroke-current" strokeWidth="1.5">
+              <path d="M3 4h10M6 4V2.5A1.5 1.5 0 0 1 7.5 1h1A1.5 1.5 0 0 1 10 2.5V4M5 4v9a1.5 1.5 0 0 0 1.5 1.5h3A1.5 1.5 0 0 0 11 13V4" />
+            </svg>
+          </IconButton>
         </div>
       </div>
 
-      {/* Fixed heights throughout so every card in a row is identical in size. */}
+      {/* Card Content Footer */}
       <div className={compact ? "px-2.5 py-2" : "px-3 py-2.5"}>
-        <div className="h-5 truncate text-[13px] font-medium text-slate-100">{clip.title}</div>
+        <div className="h-5 truncate text-[13px] font-medium text-[#e2e7ef]">{clip.title}</div>
         <div className="mt-1 flex h-4 items-center gap-1 overflow-hidden">
           {clip.tags.length > 0 && (
             <>
               {clip.tags.slice(0, 3).map((t) => (
                 <span
                   key={t}
-                  className="shrink-0 rounded-full border border-fuchsia-300/25 bg-fuchsia-500/10 px-1.5 py-px font-mono text-[9px] text-fuchsia-200/90"
+                  className="shrink-0 rounded border border-[#2f3846] bg-[#1e242f] px-1.5 py-px font-mono text-[9px] text-[#9ca7b6]"
                 >
                   #{t}
                 </span>
               ))}
               {clip.tags.length > 3 && (
-                <span className="shrink-0 font-mono text-[9px] text-slate-600">
+                <span className="shrink-0 font-mono text-[9px] text-[#6d798a]">
                   +{clip.tags.length - 3}
                 </span>
               )}
             </>
           )}
         </div>
-        <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-500">
+        <div className="mt-1.5 flex items-center justify-between font-mono text-[10px] text-[#7d8a9c]">
           <span>{formatRelativeTime(clip.created_unix_ms)}</span>
           <span>{formatBytes(clip.size_bytes)}</span>
         </div>
@@ -333,12 +343,6 @@ const ClipCard = memo(function ClipCard({
   );
 });
 
-/**
- * Virtualised grid: only the rows inside (or near) the scroll viewport are
- * mounted, so thousands of clips keep a handful of cards in the DOM. All props
- * are stable (useCallback handlers + useMemo clips), so unrelated App state
- * (stats poll, toasts, tab switches) skips the whole reconciliation.
- */
 const GalleryGrid = memo(function GalleryGrid({
   clips,
   loading,
@@ -361,67 +365,69 @@ const GalleryGrid = memo(function GalleryGrid({
     ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
     : "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
-  // The container is ALWAYS mounted (even while loading / empty) so the
-  // virtual-grid hook's ResizeObserver/scroll wiring exists from the very
-  // first render — when the first clips land, the window is already live.
   let content: React.ReactNode;
   if (loading) {
     content = (
       <div className={gridClass}>
         {Array.from({ length: compact ? 8 : 6 }).map((_, i) => (
-          <div key={i} className="panel h-[190px] animate-pulse rounded-xl opacity-50" />
+          <div key={i} className="panel h-[190px] animate-pulse rounded-xl bg-[#171b22]" />
         ))}
       </div>
     );
   } else if (clips.length === 0) {
     content = (
-      <div className="panel bg-grid flex flex-col items-center justify-center gap-3 rounded-2xl px-6 py-16 text-center">
-        <div className="grid h-14 w-14 place-items-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 text-2xl">
-          🎬
+      <div className="panel flex flex-col items-center justify-center gap-3 rounded-xl px-6 py-16 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#2b3342] bg-[#1e242f] text-[#8692a3]">
+          <svg viewBox="0 0 24 24" className="h-6 w-6 fill-none stroke-current" strokeWidth="1.5">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M7 4v16M17 4v16M2 12h20M2 8h5M2 16h5M17 8h5M17 16h5" />
+          </svg>
         </div>
-        <div className="font-mono text-sm tracking-[0.18em] text-slate-300">
-          NO CLIPS YET
+        <div className="font-mono text-[13px] font-semibold tracking-wider text-[#d4dae3]">
+          NO CLIPS RECORDED YET
         </div>
-        <p className="max-w-sm text-[13px] leading-relaxed text-slate-500">
-          The rolling buffer is filling up in memory. Hit{" "}
-          <span className="font-mono text-cyan-300">Alt + C</span> at any moment and the
-          last seconds of gameplay land here instantly.
+        <p className="max-w-sm text-[12px] leading-relaxed text-[#8692a3]">
+          The rolling buffer is running in memory. Press{" "}
+          <kbd className="rounded border border-[#3b4556] bg-[#1e242f] px-1.5 py-0.5 font-mono text-[11px] text-[#e6eaf0]">
+            Alt + C
+          </kbd>{" "}
+          at any time while playing to save the last replay moments instantly.
         </p>
       </div>
     );
   } else {
     const rows: React.ReactNode[] = [];
-  for (let r = startRow; r < endRow; r++) {
-    const from = r * cols;
-    rows.push(
-      <div
-        key={r}
-        ref={r === startRow ? rowRef : undefined}
-        className="absolute left-0 right-0 grid"
-        style={{
-          top: r * rowPitch,
-          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          gap: `${gap}px`,
-        }}
-      >
-        {clips.slice(from, from + cols).map((clip) => (
-          <ClipCard
-            key={clip.id}
-            clip={clip}
-            compact={compact}
-            selected={selectedPaths?.has(clip.path) ?? false}
-            selectMode={!!selectMode}
-            onOpen={onOpen}
-            onSelect={onSelect}
-            onCopy={onCopy}
-            onReveal={onReveal}
-            onOpenExternal={onOpenExternal}
-            onDelete={onDelete}
-            onToggleFavorite={onToggleFavorite}
-          />
-        ))}
-      </div>,
-    );
+    for (let r = startRow; r < endRow; r++) {
+      const from = r * cols;
+      rows.push(
+        <div
+          key={r}
+          ref={r === startRow ? rowRef : undefined}
+          className="absolute left-0 right-0 grid"
+          style={{
+            top: r * rowPitch,
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gap: `${gap}px`,
+          }}
+        >
+          {clips.slice(from, from + cols).map((clip) => (
+            <ClipCard
+              key={clip.id}
+              clip={clip}
+              compact={compact}
+              selected={selectedPaths?.has(clip.path) ?? false}
+              selectMode={!!selectMode}
+              onOpen={onOpen}
+              onSelect={onSelect}
+              onCopy={onCopy}
+              onReveal={onReveal}
+              onOpenExternal={onOpenExternal}
+              onDelete={onDelete}
+              onToggleFavorite={onToggleFavorite}
+            />
+          ))}
+        </div>,
+      );
     }
     content = rows;
   }

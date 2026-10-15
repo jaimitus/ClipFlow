@@ -141,6 +141,8 @@ pub struct RecorderConfig {
     pub game_volume: u32,
     /// Mix balance for the microphone source, 0-100 (100 = unity gain).
     pub mic_volume: u32,
+    /// Specific microphone device ID, or None for system default.
+    pub mic_device_id: Option<String>,
     pub output_dir: PathBuf,
     /// Per-game subfolder the next flush lands in (None = output root).
     pub output_subfolder: Option<String>,
@@ -160,6 +162,7 @@ impl Default for RecorderConfig {
             capture_microphone: false,
             game_volume: 100,
             mic_volume: 100,
+            mic_device_id: None,
             output_dir: default_output_dir(),
             output_subfolder: None,
         }
@@ -284,6 +287,63 @@ impl EncodedPacket {
     #[inline]
     fn heap_size(&self) -> usize {
         self.data.len() + std::mem::size_of::<EncodedPacket>()
+    }
+}
+
+// -------------------------------------------------------------- clock
+#[cfg(all(windows, not(feature = "headless-sim")))]
+pub struct QpcClock {
+    pub freq: i64,
+    pub origin: i64,
+}
+
+#[cfg(all(windows, not(feature = "headless-sim")))]
+impl QpcClock {
+    pub fn new() -> Self {
+        let mut freq = 0i64;
+        let mut now = 0i64;
+        unsafe {
+            let _ = windows::Win32::System::Performance::QueryPerformanceFrequency(&mut freq);
+            let _ = windows::Win32::System::Performance::QueryPerformanceCounter(&mut now);
+        }
+        Self {
+            freq: if freq == 0 { 10_000_000 } else { freq },
+            origin: now,
+        }
+    }
+
+    pub fn to_hns(&self, qpc: i64) -> i64 {
+        ((qpc - self.origin) as i128 * HNS_PER_SECOND as i128 / self.freq as i128) as i64
+    }
+
+    pub fn now_hns(&self) -> i64 {
+        let mut now = 0i64;
+        unsafe {
+            let _ = windows::Win32::System::Performance::QueryPerformanceCounter(&mut now);
+        }
+        self.to_hns(now)
+    }
+}
+
+#[cfg(any(not(windows), feature = "headless-sim"))]
+pub struct QpcClock {
+    start: std::time::Instant,
+}
+
+#[cfg(any(not(windows), feature = "headless-sim"))]
+impl QpcClock {
+    pub fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+        }
+    }
+
+    pub fn to_hns(&self, qpc: i64) -> i64 {
+        qpc
+    }
+
+    pub fn now_hns(&self) -> i64 {
+        (self.start.elapsed().as_nanos() / 100) as i64
     }
 }
 
@@ -539,6 +599,8 @@ pub struct CaptureEngine {
     /// Live mix levels (permille, 0-1000) shared with the audio thread.
     game_gain: Arc<AtomicU32>,
     mic_gain: Arc<AtomicU32>,
+    /// Specific microphone device ID (None = Windows default console device).
+    mic_device: Arc<parking_lot::RwLock<Option<String>>>,
     /// Set by the muxer thread once the first flush produced a valid header.
     video_format: Arc<Mutex<Option<VideoFormatHeader>>>,
 }
@@ -560,6 +622,7 @@ pub struct VideoFormatHeader {
 impl CaptureEngine {
     pub fn new() -> Self {
         let cfg = RecorderConfig::default();
+        let mic_dev = cfg.mic_device_id.clone();
         Self {
             shared: Arc::new(SharedState::new(&cfg)),
             config: RwLock::new(cfg),
@@ -568,6 +631,7 @@ impl CaptureEngine {
             audio_error: Arc::new(parking_lot::Mutex::new(None)),
             game_gain: Arc::new(AtomicU32::new(1000)),
             mic_gain: Arc::new(AtomicU32::new(1000)),
+            mic_device: Arc::new(parking_lot::RwLock::new(mic_dev)),
             video_format: Arc::new(Mutex::new(None)),
         }
     }
@@ -646,6 +710,8 @@ impl CaptureEngine {
         *self.shared.started_at.lock() = Some(Instant::now());
         self.shared.set_state(EngineState::Starting);
 
+        let clock = Arc::new(QpcClock::new());
+
         // Audio first: WASAPI needs a couple of hundred ms to spin up its
         // endpoint, and starting it early keeps A/V aligned from frame zero.
         if cfg.capture_system_audio || cfg.capture_microphone {
@@ -662,14 +728,17 @@ impl CaptureEngine {
                 (cfg.mic_volume.min(100) as u32) * 10,
                 Ordering::Release,
             );
+            *self.mic_device.write() = cfg.mic_device_id.clone();
             match crate::media::audio::AudioCapture::start(
                 cfg.capture_system_audio,
                 cfg.capture_microphone,
                 Arc::clone(&self.game_gain),
                 Arc::clone(&self.mic_gain),
+                Arc::clone(&self.mic_device),
                 Arc::clone(&self.shared.ring),
                 Arc::clone(&self.shared.generation),
                 Arc::clone(&self.audio_error),
+                Arc::clone(&clock),
             ) {
                 Ok(a) => *self.audio.lock() = Some(a),
                 Err(e) => {
@@ -685,6 +754,7 @@ impl CaptureEngine {
         let shared = Arc::clone(&self.shared);
         let fmt = Arc::clone(&self.video_format);
         let thread_cfg = cfg.clone();
+        let clock_c = Arc::clone(&clock);
         let handle = std::thread::Builder::new()
             .name("clipflow-capture".into())
             .spawn(move || {
@@ -692,7 +762,7 @@ impl CaptureEngine {
                 // must also never starve the game: "above normal" is the sweet
                 // spot measured across NVENC/AMF/QSV on 6-16 core parts.
                 set_thread_priority_above_normal();
-                capture_thread_main(shared, thread_cfg, fmt);
+                capture_thread_main(shared, thread_cfg, fmt, clock_c);
             })
             .map_err(|e| RecorderError::Other(format!("failed to spawn capture thread: {e}")))?;
         *self.worker.lock() = Some(handle);
@@ -767,6 +837,11 @@ impl CaptureEngine {
     pub fn set_audio_volumes(&self, game: u32, mic: u32) {
         self.game_gain.store(game.min(100) * 10, Ordering::Release);
         self.mic_gain.store(mic.min(100) * 10, Ordering::Release);
+    }
+
+    /// Selects a specific microphone device live, or None to follow system default.
+    pub fn set_mic_device(&self, device_id: Option<String>) {
+        *self.mic_device.write() = device_id;
     }
 
     pub fn simulate_device_loss(&self) {
@@ -867,9 +942,6 @@ mod win {
     use windows::Win32::Graphics::Dxgi::*;
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
-    use windows::Win32::System::Performance::{
-        QueryPerformanceCounter, QueryPerformanceFrequency,
-    };
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::{
         GetCurrentProcess, GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
@@ -887,41 +959,6 @@ mod win {
             || c == DXGI_ERROR_ACCESS_LOST
             || c == DXGI_ERROR_DEVICE_HUNG
             || c == DXGI_ERROR_DRIVER_INTERNAL_ERROR
-    }
-
-    // -------------------------------------------------------------- clock
-    pub(super) struct QpcClock {
-        freq: i64,
-        origin: i64,
-    }
-
-    impl QpcClock {
-        pub fn new() -> Self {
-            let mut freq = 0i64;
-            let mut now = 0i64;
-            unsafe {
-                let _ = QueryPerformanceFrequency(&mut freq);
-                let _ = QueryPerformanceCounter(&mut now);
-            }
-            Self {
-                freq: if freq == 0 { 10_000_000 } else { freq },
-                origin: now,
-            }
-        }
-
-        /// Converts a raw QPC stamp (as handed out by DXGI/WASAPI) into engine
-        /// time. Both A and V use this, which is what kills drift.
-        pub fn to_hns(&self, qpc: i64) -> i64 {
-            ((qpc - self.origin) as i128 * HNS_PER_SECOND as i128 / self.freq as i128) as i64
-        }
-
-        pub fn now_hns(&self) -> i64 {
-            let mut now = 0i64;
-            unsafe {
-                let _ = QueryPerformanceCounter(&mut now);
-            }
-            self.to_hns(now)
-        }
     }
 
     // ------------------------------------------------------- MF lifecycle
@@ -1879,6 +1916,7 @@ mod win {
         shared: Arc<SharedState>,
         cfg: RecorderConfig,
         fmt: Arc<Mutex<Option<VideoFormatHeader>>>,
+        clock: Arc<super::QpcClock>,
     ) {
         let _session = match MfSession::new() {
             Ok(s) => s,
@@ -1888,7 +1926,6 @@ mod win {
             }
         };
 
-        let clock = QpcClock::new();
         let mut backoff_ms = 40u64;
 
         'outer: while !shared.stop_requested.load(Ordering::Acquire) {
@@ -2169,6 +2206,7 @@ mod sim {
         shared: Arc<SharedState>,
         cfg: RecorderConfig,
         fmt: Arc<Mutex<Option<VideoFormatHeader>>>,
+        _clock: Arc<super::QpcClock>,
     ) {
         let w = if cfg.width == 0 { 1920 } else { cfg.width };
         let h = if cfg.height == 0 { 1080 } else { cfg.height };
@@ -2256,8 +2294,9 @@ fn capture_thread_main(
     shared: Arc<SharedState>,
     cfg: RecorderConfig,
     fmt: Arc<Mutex<Option<VideoFormatHeader>>>,
+    clock: Arc<QpcClock>,
 ) {
-    platform::capture_loop(shared, cfg, fmt);
+    platform::capture_loop(shared, cfg, fmt, clock);
 }
 
 fn mux_packets_to_mp4(

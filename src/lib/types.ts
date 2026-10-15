@@ -133,6 +133,12 @@ export interface MonitorInfo {
   adapter: string;
 }
 
+export interface AudioDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 export interface AppSettings {
   bufferSeconds: number;
   targetFps: number;
@@ -175,6 +181,8 @@ export interface AppSettings {
   gameVolume: number;
   /** Microphone volume in the mix, 0-100. Applies live. */
   micVolume: number;
+  /** Specific microphone device ID, or null for Windows default console device. */
+  micDeviceId?: string | null;
   /**
    * Adaptive capture (ECO): on battery or under memory pressure the deck
    * shrinks the rolling buffer live and caps the fps. Invisible when off.

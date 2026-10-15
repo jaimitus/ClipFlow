@@ -100,10 +100,10 @@ interface Toast {
 }
 
 const TONE_STYLES: Record<ToastTone, string> = {
-  ok: "border-lime-400/40 bg-lime-400/10 text-lime-100",
-  warn: "border-amber-400/40 bg-amber-400/10 text-amber-100",
-  err: "border-rose-500/40 bg-rose-500/10 text-rose-100",
-  info: "border-cyan-300/40 bg-cyan-400/10 text-cyan-100",
+  ok: "border-emerald-500/40 bg-[#161d27] text-[#e6eaf0] shadow-lg",
+  warn: "border-amber-500/40 bg-[#161d27] text-[#e6eaf0] shadow-lg",
+  err: "border-red-500/40 bg-[#161d27] text-[#e6eaf0] shadow-lg",
+  info: "border-blue-500/40 bg-[#161d27] text-[#e6eaf0] shadow-lg",
 };
 
 export default function App() {
@@ -1328,9 +1328,7 @@ export default function App() {
   }, [filtered.length]);
 
   return (
-    <div className="bg-aurora relative flex h-screen w-screen flex-col overflow-hidden bg-[#05060d]">
-      <div className="bg-grid pointer-events-none absolute inset-0 opacity-60" />
-
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[#111318] text-[#e6eaf0]">
       <TitleBar armed={armed} native={native} version={APP_VERSION} />
 
       <main
@@ -1338,7 +1336,7 @@ export default function App() {
         className="relative z-10 flex-1 overflow-y-auto"
         style={activeClip ? { overflowY: "hidden" } : undefined}
       >
-        <div className="mx-auto grid max-w-[1400px] gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="mx-auto grid max-w-[1440px] gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_390px]">
           {/* -------------------------------------------------- main column */}
           <div className="space-y-5">
             <BufferStatusCard
@@ -1350,215 +1348,267 @@ export default function App() {
               onSave={() => void handleSave()}
             />
 
-            <section className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <h2 className="font-mono text-[12px] tracking-[0.28em] text-slate-300">
-                    CLIP LIBRARY
+            <section className="space-y-3.5">
+              {/* Library Primary Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#232934] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-[14px] font-semibold tracking-wide text-[#e6eaf0]">
+                    Clip Library
                   </h2>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[10px] text-slate-500">
-                    {clips.length} clips · {formatBytes(totalBytes)}
+                  <span className="rounded-full border border-[#2b3342] bg-[#171b22] px-2.5 py-0.5 font-mono text-[10px] text-[#8692a3]">
+                    {clips.length} {clips.length === 1 ? "clip" : "clips"} · {formatBytes(totalBytes)}
                   </span>
                 </div>
+
                 <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    name="clip-filter"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Filter clips…"
-                    className="w-40 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
-                  />
+                  {/* Search box */}
+                  <div className="relative">
+                    <svg
+                      className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5a6779]"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <circle cx="7" cy="7" r="4.5" />
+                      <path d="M10.5 10.5L14 14" />
+                    </svg>
+                    <input
+                      name="clip-filter"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search title, filename…"
+                      className="w-48 rounded-lg border border-[#28313e] bg-[#14171e] pl-8 pr-2.5 py-1.5 font-mono text-[11px] text-[#e6eaf0] outline-none placeholder:text-[#556172] focus:border-blue-400"
+                    />
+                  </div>
+
+                  {/* Game filter */}
                   <select
                     value={gameFilter}
                     onChange={(e) => setGameFilter(e.target.value)}
                     title="Filter by game"
-                    className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 font-mono text-[11px] text-slate-300 outline-none transition hover:border-white/25 focus:border-cyan-300/50"
+                    className="rounded-lg border border-[#28313e] bg-[#14171e] px-2.5 py-1.5 font-mono text-[11px] text-[#c3cddb] outline-none transition-colors hover:border-[#384457] focus:border-blue-400"
                   >
-                    <option value="all" className="bg-[#0a0d1a]">ALL GAMES</option>
+                    <option value="all" className="bg-[#111318]">All Games</option>
                     {games.map((g) => (
-                      <option key={g} value={g} className="bg-[#0a0d1a]">
+                      <option key={g} value={g} className="bg-[#111318]">
                         {g.toUpperCase()}
                       </option>
                     ))}
                   </select>
+
+                  {/* Sort dropdown */}
                   <select
                     value={sortKey}
                     onChange={(e) => setSortKey(e.target.value as SortKey)}
                     title="Sort clips"
-                    className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 font-mono text-[11px] text-slate-300 outline-none transition hover:border-white/25 focus:border-cyan-300/50"
+                    className="rounded-lg border border-[#28313e] bg-[#14171e] px-2.5 py-1.5 font-mono text-[11px] text-[#c3cddb] outline-none transition-colors hover:border-[#384457] focus:border-blue-400"
                   >
-                    <option value="newest" className="bg-[#0a0d1a]">NEWEST</option>
-                    <option value="oldest" className="bg-[#0a0d1a]">OLDEST</option>
-                    <option value="largest" className="bg-[#0a0d1a]">LARGEST</option>
-                    <option value="smallest" className="bg-[#0a0d1a]">SMALLEST</option>
-                    <option value="longest" className="bg-[#0a0d1a]">LONGEST</option>
-                    <option value="shortest" className="bg-[#0a0d1a]">SHORTEST</option>
+                    <option value="newest" className="bg-[#111318]">Newest</option>
+                    <option value="oldest" className="bg-[#111318]">Oldest</option>
+                    <option value="largest" className="bg-[#111318]">Largest Size</option>
+                    <option value="smallest" className="bg-[#111318]">Smallest Size</option>
+                    <option value="longest" className="bg-[#111318]">Longest Duration</option>
+                    <option value="shortest" className="bg-[#111318]">Shortest Duration</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Secondary Toolbar: Filters & Actions */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                {/* Filter toggles */}
+                <div className="flex items-center gap-1.5">
                   <button
+                    type="button"
                     onClick={() => setAudioOnly((v) => !v)}
-                    title="Only clips with audio"
+                    title="Only clips with recorded audio track"
                     className={cn(
-                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      "rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors",
                       audioOnly
-                        ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
-                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                        ? "border-blue-500 bg-blue-500/15 text-blue-200 font-semibold"
+                        : "border-[#28313e] bg-[#14171e] text-[#8692a3] hover:text-[#e6eaf0]",
                     )}
                   >
-                    ♪ AUDIO
+                    Audio Only
                   </button>
+
                   <button
+                    type="button"
                     onClick={() => setFavOnly((v) => !v)}
-                    title="Only your favourite clips"
+                    title="Only starred clips"
                     className={cn(
-                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      "rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors",
                       favOnly
-                        ? "border-amber-300/60 bg-amber-400/15 text-amber-100"
-                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                        ? "border-amber-400/50 bg-amber-400/15 text-amber-200 font-semibold"
+                        : "border-[#28313e] bg-[#14171e] text-[#8692a3] hover:text-[#e6eaf0]",
                     )}
                   >
-                    ★ FAVS
+                    ★ Favorites
                   </button>
+
                   <button
+                    type="button"
                     onClick={() => {
                       setSelectMode((v) => !v);
                       setTagAction(null);
                     }}
-                    title="Multi-select mode: click cards to select, Ctrl/Shift for ranges"
+                    title="Multi-select mode: click cards to select, Shift/Ctrl for ranges"
                     className={cn(
-                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      "rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors",
                       selectMode || selectionCount(selection) > 0
-                        ? "border-cyan-300/60 bg-cyan-400/15 text-cyan-100"
-                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                        ? "border-blue-500 bg-blue-500/15 text-blue-200 font-semibold"
+                        : "border-[#28313e] bg-[#14171e] text-[#8692a3] hover:text-[#e6eaf0]",
                     )}
                   >
-                    ☑ SELECT
+                    Select
                   </button>
+
                   <button
+                    type="button"
                     onClick={() => setCompact((v) => !v)}
-                    title="Compact grid"
+                    title="Toggle compact 4-column grid view"
                     className={cn(
-                      "rounded-lg border px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] transition",
+                      "rounded-lg border px-2.5 py-1 font-mono text-[11px] transition-colors",
                       compact
-                        ? "border-cyan-300/60 bg-cyan-400/15 text-cyan-100"
-                        : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                        ? "border-[#3b4759] bg-[#1d232e] text-[#e6eaf0] font-semibold"
+                        : "border-[#28313e] bg-[#14171e] text-[#8692a3] hover:text-[#e6eaf0]",
                     )}
                   >
-                    ▦ COMPACT
+                    Compact
                   </button>
+                </div>
+
+                {/* Library management actions */}
+                <div className="flex items-center gap-1.5">
                   <button
+                    type="button"
+                    onClick={() => void refreshClips()}
+                    className="rounded-lg border border-[#28313e] bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-[#8692a3] hover:border-[#384457] hover:text-white"
+                  >
+                    Rescan
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void clipflow.openOutputFolder()}
+                    className="rounded-lg border border-[#28313e] bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-[#8692a3] hover:border-[#384457] hover:text-white"
+                  >
+                    Open Folder
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setConfirmClear(true)}
                     disabled={clips.length === 0}
-                    title="Delete every clip"
-                    className="rounded-lg border border-rose-500/30 px-2.5 py-1.5 font-mono text-[11px] tracking-[0.12em] text-rose-300/90 transition hover:border-rose-400/60 hover:bg-rose-500/10 disabled:opacity-35"
+                    title="Delete all clips in library"
+                    className="rounded-lg border border-red-500/30 bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-red-300/80 hover:border-red-400/60 hover:bg-red-500/10 hover:text-red-200 disabled:opacity-30"
                   >
-                    ✕ CLEAR
-                  </button>
-                  <button
-                    onClick={() => void refreshClips()}
-                    className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
-                  >
-                    RESCAN
-                  </button>
-                  <button
-                    onClick={() => void clipflow.openOutputFolder()}
-                    className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
-                  >
-                    FOLDER
+                    Clear All
                   </button>
                 </div>
               </div>
 
+              {/* Batch selection toolbar */}
               {(selectMode || selectionCount(selection) > 0) && (
-                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-400/[0.06] px-3 py-2">
-                  <span className="font-mono text-[10px] font-semibold tracking-[0.18em] text-cyan-200">
-                    {selectionCount(selection)} SELECTED
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/40 bg-[#141a24] px-3.5 py-2">
+                  <span className="font-mono text-[11px] font-semibold text-blue-300">
+                    {selectionCount(selection)} selected
                   </span>
-                  <div className="h-4 w-px bg-white/10" />
+                  <div className="h-4 w-px bg-[#2b3342]" />
                   <button
+                    type="button"
                     onClick={() => void setSelectedFavorite(true)}
-                    title="Star all selected"
-                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-amber-300/60 hover:text-amber-200"
+                    title="Star all selected clips"
+                    className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#c3cddb] hover:text-amber-300"
                   >
-                    ★ FAV
+                    ★ Star
                   </button>
                   <button
+                    type="button"
                     onClick={() => void setSelectedFavorite(false)}
-                    title="Unstar all selected"
-                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+                    title="Unstar all selected clips"
+                    className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#c3cddb] hover:text-white"
                   >
-                    ☆ UNFAV
+                    ☆ Unstar
                   </button>
                   <button
+                    type="button"
                     onClick={() => setTagAction(tagAction === "add" ? null : "add")}
                     title="Add a tag to every selected clip"
                     className={cn(
-                      "rounded-lg border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                      "rounded border px-2 py-0.5 font-mono text-[10px] transition-colors",
                       tagAction === "add"
-                        ? "border-fuchsia-300/60 bg-fuchsia-500/15 text-fuchsia-100"
-                        : "border-white/10 text-slate-300 hover:border-fuchsia-300/50 hover:text-fuchsia-200",
+                        ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                        : "border-[#2b3342] bg-[#171b22] text-[#c3cddb] hover:text-white",
                     )}
                   >
-                    # +TAG
+                    + Tag
                   </button>
                   <button
+                    type="button"
                     onClick={() => setTagAction(tagAction === "remove" ? null : "remove")}
                     title="Remove a tag from every selected clip"
                     className={cn(
-                      "rounded-lg border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                      "rounded border px-2 py-0.5 font-mono text-[10px] transition-colors",
                       tagAction === "remove"
-                        ? "border-fuchsia-300/60 bg-fuchsia-500/15 text-fuchsia-100"
-                        : "border-white/10 text-slate-300 hover:border-fuchsia-300/50 hover:text-fuchsia-200",
+                        ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                        : "border-[#2b3342] bg-[#171b22] text-[#c3cddb] hover:text-white",
                     )}
                   >
-                    # −TAG
+                    − Tag
                   </button>
                   <button
+                    type="button"
                     onClick={() => void copySelectedPaths()}
-                    title="Copy every selected path as a file drop"
-                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-cyan-300/50 hover:text-cyan-200"
+                    title="Copy paths of selected clips"
+                    className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#c3cddb] hover:text-white"
                   >
-                    ⧉ PATHS
+                    Copy Paths
                   </button>
                   <button
+                    type="button"
                     onClick={selectAllVisible}
                     disabled={selectionCount(selection) >= filtered.length}
-                    title="Select every visible clip"
-                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-300 transition hover:border-white/30 hover:text-slate-100 disabled:opacity-35"
+                    className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#c3cddb] hover:text-white disabled:opacity-40"
                   >
-                    ALL
+                    Select All
                   </button>
+
                   {confirmDeleteSelection ? (
                     <span className="flex items-center gap-1.5">
-                      <span className="font-mono text-[10px] tracking-[0.1em] text-rose-200">
-                        DELETE {selectionCount(selection)} CLIP
-                        {selectionCount(selection) === 1 ? "" : "S"}?
+                      <span className="font-mono text-[10px] text-red-300">
+                        Delete {selectionCount(selection)} clip{selectionCount(selection) === 1 ? "" : "s"}?
                       </span>
                       <button
+                        type="button"
                         onClick={() => void deleteSelected()}
-                        className="rounded-lg border border-rose-400/70 bg-rose-500/20 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-rose-100 transition hover:bg-rose-500/30"
+                        className="rounded border border-red-500/70 bg-red-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-red-200 hover:bg-red-500/30"
                       >
-                        CONFIRM
+                        Confirm
                       </button>
                       <button
+                        type="button"
                         onClick={() => setConfirmDeleteSelection(false)}
-                        className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-400 transition hover:text-slate-200"
+                        className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#8692a3] hover:text-white"
                       >
-                        CANCEL
+                        Cancel
                       </button>
                     </span>
                   ) : (
                     <button
+                      type="button"
                       onClick={() => setConfirmDeleteSelection(true)}
-                      title="Delete every selected clip"
-                      className="rounded-lg border border-rose-500/30 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-500/10"
+                      className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 font-mono text-[10px] text-red-300 hover:border-red-400 hover:bg-red-500/20"
                     >
-                      ✕ DELETE
+                      Delete
                     </button>
                   )}
+
                   <div className="flex-1" />
+
                   {tagAction && (
                     <form
-                      className="flex items-center gap-1"
+                      className="flex items-center gap-1.5"
                       onSubmit={(e) => {
                         e.preventDefault();
                         void applyTagToSelection(tagInput, tagAction === "add");
@@ -1569,38 +1619,42 @@ export default function App() {
                         value={tagInput}
                         onChange={(e) => setTagInput(e.target.value)}
                         placeholder={tagAction === "add" ? "tag to add…" : "tag to remove…"}
-                        className="w-36 rounded-lg border border-white/15 bg-black/60 px-2 py-1 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50"
+                        className="w-32 rounded border border-[#2b3342] bg-[#11141a] px-2 py-0.5 font-mono text-[11px] text-[#e2e7ef] outline-none placeholder:text-[#556172] focus:border-blue-400"
                       />
                       <button
                         type="submit"
-                        className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-fuchsia-200 transition hover:bg-fuchsia-500/20"
+                        className="rounded border border-blue-500 bg-blue-600 px-2 py-0.5 font-mono text-[10px] font-semibold text-white hover:bg-blue-500"
                       >
-                        OK
+                        Apply
                       </button>
                     </form>
                   )}
+
                   <button
+                    type="button"
                     onClick={clearSelection}
-                    title="Clear selection (Esc)"
-                    className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-slate-400 transition hover:border-white/30 hover:text-slate-100"
+                    title="Deselect all (Esc)"
+                    className="rounded border border-[#2b3342] bg-[#171b22] px-2 py-0.5 font-mono text-[10px] text-[#8692a3] hover:text-white"
                   >
                     ✕
                   </button>
                 </div>
               )}
 
+              {/* Tags Filter Row */}
               {allTags.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-mono text-[9px] tracking-[0.18em] text-slate-600">TAGS</span>
+                  <span className="font-mono text-[10px] tracking-wider text-[#687383]">TAGS:</span>
                   {allTags.map((t) => (
                     <button
                       key={t}
+                      type="button"
                       onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
                       className={cn(
-                        "rounded-full border px-2.5 py-0.5 font-mono text-[10px] tracking-[0.1em] transition",
+                        "rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors",
                         tagFilter === t
-                          ? "border-fuchsia-300/70 bg-fuchsia-500/20 text-fuchsia-100"
-                          : "border-white/10 text-slate-400 hover:border-fuchsia-300/40 hover:text-fuchsia-200",
+                          ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                          : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
                       )}
                     >
                       #{t}
@@ -1608,18 +1662,17 @@ export default function App() {
                   ))}
                   {tagFilter && (
                     <button
+                      type="button"
                       onClick={() => setTagFilter(null)}
-                      className="rounded-full border border-white/10 px-2 py-0.5 font-mono text-[9px] text-slate-500 transition hover:text-slate-200"
+                      className="rounded-full border border-[#2b3342] bg-[#14171e] px-2 py-0.5 font-mono text-[9px] text-[#717d8e] hover:text-white"
                     >
-                      CLEAR
+                      Clear filter
                     </button>
                   )}
                 </div>
               )}
 
-              {/* Stable references so the memoised ClipCard/GalleryGrid can
-                  skip re-rendering when unrelated state changes (stats poll,
-                  toasts…). All of these are useCallback-wrapped above. */}
+              {/* Virtualized Gallery Grid */}
               <GalleryGrid
                 clips={visibleClips}
                 loading={loadingClips}
@@ -1637,29 +1690,27 @@ export default function App() {
 
               {visibleClips.length < filtered.length && (
                 <>
-                  {/* Infinite-scroll sentinel: auto-loads the next page as it
-                      nears the bottom of the viewport (the LOAD MORE button
-                      below stays as the explicit fallback). */}
                   <div ref={sentinelRef} className="h-px" aria-hidden />
-                  <div className="mt-5 flex flex-col items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setVisibleCount((c) => c + GALLERY_PAGE_SIZE)}
-                      className="rounded-xl border border-cyan-300/40 bg-cyan-400/10 px-5 py-2.5 font-mono text-[11px] font-semibold tracking-[0.2em] text-cyan-100 transition hover:border-cyan-300/70 hover:bg-cyan-400/20 active:scale-[0.98]"
-                    >
-                      LOAD MORE · +
-                      {Math.min(GALLERY_PAGE_SIZE, filtered.length - visibleClips.length)}
-                    </button>
-                    <button
-                      onClick={() => setVisibleCount(filtered.length)}
-                      className="rounded-xl border border-white/10 px-4 py-2.5 font-mono text-[11px] tracking-[0.2em] text-slate-400 transition hover:border-white/25 hover:text-slate-200"
-                    >
-                      LOAD ALL ({filtered.length})
-                    </button>
-                  </div>
-                  <span className="font-mono text-[10px] tracking-[0.16em] text-slate-500">
-                    SHOWING {visibleClips.length} OF {filtered.length} FILTERED CLIPS
-                  </span>
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleCount((c) => c + GALLERY_PAGE_SIZE)}
+                        className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 font-mono text-[11px] font-semibold tracking-wider text-blue-200 transition-colors hover:bg-blue-500/20"
+                      >
+                        Load More (+{Math.min(GALLERY_PAGE_SIZE, filtered.length - visibleClips.length)})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisibleCount(filtered.length)}
+                        className="rounded-lg border border-[#2b3342] bg-[#14171e] px-3.5 py-2 font-mono text-[11px] text-[#8692a3] hover:text-white"
+                      >
+                        Load All ({filtered.length})
+                      </button>
+                    </div>
+                    <span className="font-mono text-[10px] text-[#687383]">
+                      Showing {visibleClips.length} of {filtered.length} clips
+                    </span>
                   </div>
                 </>
               )}
@@ -1668,89 +1719,86 @@ export default function App() {
 
           {/* ----------------------------------------------------- side rail */}
           <aside className="space-y-4">
-            <section className="panel scanlines relative overflow-hidden rounded-2xl p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-mono text-[11px] tracking-[0.24em] text-cyan-300">
+            {/* Instant Replay Panel */}
+            <section className="panel rounded-xl p-4">
+              <div className="flex items-center justify-between border-b border-[#232934] pb-3">
+                <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
                   INSTANT REPLAY
                 </h3>
-                <div className="flex items-center gap-1.5 font-mono text-[9px] tracking-[0.1em]">
+                <div className="flex items-center gap-1.5 font-mono text-[10px]">
                   {flushStats ? (
-                    <>
-                      <span className="rounded border border-lime-400/30 bg-lime-400/10 px-1.5 py-0.5 text-lime-200">
-                        LAST {flushStats.last.toFixed(1)} MS
-                      </span>
-                      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-slate-400">
-                        AVG {flushStats.avg.toFixed(1)} MS
-                      </span>
-                      <span className="rounded border border-fuchsia-400/30 bg-fuchsia-500/10 px-1.5 py-0.5 text-fuchsia-200">
-                        BEST {flushStats.best.toFixed(1)} MS
-                      </span>
-                    </>
+                    <span className="rounded border border-[#2b3342] bg-[#14171e] px-2 py-0.5 text-[#8692a3]">
+                      Flush: {flushStats.last.toFixed(1)} ms
+                    </span>
                   ) : (
-                    <span className="text-slate-600">NO FLUSHES THIS SESSION</span>
+                    <span className="text-[#556172]">Ready</span>
                   )}
                 </div>
               </div>
 
+              {/* Primary Instant Replay CTA */}
               <button
+                type="button"
                 onClick={() => void handleSave()}
                 disabled={!armed || busy}
                 className={cn(
-                  "group mt-3 w-full rounded-xl border border-fuchsia-400/40 bg-gradient-to-br from-fuchsia-500/25 to-cyan-400/15 px-4 py-4 text-left transition",
+                  "mt-3.5 w-full rounded-lg border p-4 text-left transition-colors duration-150",
                   armed && !busy
-                    ? "hover:border-fuchsia-300/70 hover:from-fuchsia-500/35"
-                    : "cursor-not-allowed opacity-45",
+                    ? "border-blue-500/50 bg-[#16202e] hover:border-blue-400 hover:bg-[#1a2638]"
+                    : "cursor-not-allowed border-[#232934] bg-[#14171e] opacity-50",
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[13px] font-semibold tracking-[0.2em] text-fuchsia-100">
+                  <span className="font-mono text-[13px] font-semibold tracking-wider text-[#e6eaf0]">
                     SAVE LAST {settings.bufferSeconds}s
                   </span>
-                  <kbd className="rounded border border-white/20 bg-black/50 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] text-slate-200">
+                  <kbd className="rounded border border-blue-400/30 bg-black/40 px-2 py-0.5 font-mono text-[10px] text-blue-300 font-semibold">
                     {settings.hotkeySave}
                   </kbd>
                 </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-                  Flushes the GPU-encoded ring buffer straight to MP4 — target under 50 ms,
-                  no re-encode, no stutter.
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[#8692a3]">
+                  Flushes the GPU-encoded ring buffer directly to MP4 without re-encoding.
                 </p>
               </button>
 
+              {/* Quick save duration presets */}
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {[15, 30, 60].map((s) => (
                   <button
                     key={s}
+                    type="button"
                     disabled={!armed || busy}
                     onClick={() => void handleSave(s)}
-                    className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 font-mono text-[11px] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200 disabled:opacity-40"
+                    className="rounded-lg border border-[#2b3342] bg-[#14171e] py-1.5 font-mono text-[11px] font-medium text-[#c3cddb] transition-colors hover:border-blue-400/60 hover:text-white disabled:opacity-35"
                   >
-                    LAST {s}s
+                    Last {s}s
                   </button>
                 ))}
               </div>
 
               {sessionSaves > 0 && (
-                <div className="mt-2 flex items-center justify-between rounded-lg border border-white/5 bg-black/25 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-slate-500">
-                  <span className="text-slate-400">THIS SESSION</span>
-                  <span className="text-lime-300">
-                    {sessionSaves} CLIP{sessionSaves === 1 ? "" : "S"} · {formatBytes(sessionBytes)}
+                <div className="mt-2.5 flex items-center justify-between rounded-lg border border-[#232934] bg-[#14171e] px-3 py-2 font-mono text-[10px]">
+                  <span className="text-[#7e8b9d]">THIS SESSION</span>
+                  <span className="text-[#e2e7ef] font-semibold">
+                    {sessionSaves} clip{sessionSaves === 1 ? "" : "s"} · {formatBytes(sessionBytes)}
                   </span>
                 </div>
               )}
 
+              {/* Current game and active preset */}
               <div
-                title={foreground ? `${foreground.exe} — ${foreground.title}` : "No game focused"}
-                className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-black/25 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-slate-500"
+                title={foreground ? `${foreground.exe}: ${foreground.title}` : "No game window focused"}
+                className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-[#232934] bg-[#14171e] px-3 py-2 font-mono text-[10px]"
               >
-                <span className="shrink-0 text-slate-400">GAME</span>
-                <span className="min-w-0 flex-1 truncate text-right text-cyan-200">
+                <span className="shrink-0 text-[#7e8b9d]">GAME</span>
+                <span className="min-w-0 flex-1 truncate text-right text-blue-300">
                   {foreground ? foreground.exe : "—"}
                 </span>
-                <span className="shrink-0 text-slate-400">PROFILE</span>
+                <span className="shrink-0 text-[#7e8b9d]">PRESET</span>
                 <span
                   className={cn(
-                    "shrink-0",
-                    activeProfileId ? "text-lime-300" : "text-slate-300",
+                    "shrink-0 font-medium",
+                    activeProfileId ? "text-emerald-300" : "text-[#8692a3]",
                   )}
                 >
                   {activeProfileId
@@ -1759,22 +1807,23 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Quick profile switch — one click, no Settings needed. */}
+              {/* Quick profile chips */}
               {settings.profiles.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {settings.profiles.map((p) => (
                     <button
                       key={p.id}
+                      type="button"
                       onClick={() => void applyProfile(p.id)}
                       disabled={busy}
-                      title={`${p.name} — ${p.bufferSeconds >= 60 ? `${p.bufferSeconds / 60}m` : `${p.bufferSeconds}s`} buffer · ${(
+                      title={`${p.name}: ${p.bufferSeconds >= 60 ? `${p.bufferSeconds / 60}m` : `${p.bufferSeconds}s`} buffer · ${(
                         p.bitrateKbps / 1000
                       ).toFixed(0)} Mb/s · ${p.codec.toUpperCase()}`}
                       className={cn(
-                        "rounded-md border px-2 py-1 font-mono text-[10px] tracking-[0.1em] transition",
+                        "rounded border px-2 py-1 font-mono text-[10px] tracking-wider transition-colors",
                         activeProfileId === p.id
-                          ? "border-lime-300/60 bg-lime-400/15 text-lime-100"
-                          : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                          ? "border-blue-500 bg-blue-500/20 text-blue-200 font-semibold"
+                          : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
                       )}
                     >
                       {p.name.toUpperCase()}
@@ -1784,23 +1833,26 @@ export default function App() {
               )}
             </section>
 
-            <div className="grid grid-cols-4 gap-1.5">
+            {/* Segmented Navigation Tab Bar */}
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-[#232934] bg-[#14171e] p-1">
               {(["pipeline", "profiles", "stats", "settings"] as const).map((t) => (
                 <button
                   key={t}
+                  type="button"
                   onClick={() => setTab(t)}
                   className={cn(
-                    "rounded-lg border px-1.5 py-2 font-mono text-[10px] tracking-[0.12em] transition",
+                    "rounded-md py-1.5 font-mono text-[10px] font-semibold tracking-wider transition-colors",
                     tab === t
-                      ? "border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
-                      : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-[#8692a3] hover:text-[#e6eaf0]",
                   )}
                 >
-                  {t === "pipeline" ? "PIPELINE" : t === "profiles" ? "PROFILES" : t === "stats" ? "STATS" : "SETTINGS"}
+                  {t.toUpperCase()}
                 </button>
               ))}
             </div>
 
+            {/* Panel Tab View */}
             {tab === "settings" ? (
               <SettingsPanel
                 settings={settings}
@@ -1817,7 +1869,7 @@ export default function App() {
                 onCheckForUpdates={() => void checkForUpdates()}
                 onSimulateDeviceLoss={() => {
                   clipflow.simulateDeviceLoss();
-                  pushToast("warn", "Simulating DXGI_ERROR_ACCESS_LOST", "Rebuilding D3D11 device + duplication…");
+                  pushToast("warn", "Simulating DXGI device access lost", "Rebuilding D3D11 device and desktop duplication…");
                 }}
               />
             ) : tab === "profiles" ? (
@@ -1841,26 +1893,27 @@ export default function App() {
         </div>
       </main>
 
-      {/* Toasts */}
+      {/* Toast Notifications */}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cn(
-              "animate-toast pointer-events-auto rounded-xl border px-3.5 py-2.5 backdrop-blur-lg",
+              "animate-toast pointer-events-auto rounded-xl border px-3.5 py-2.5",
               TONE_STYLES[t.tone],
             )}
           >
-            <div className="font-mono text-[11px] font-semibold tracking-[0.12em]">
+            <div className="font-mono text-[11px] font-semibold tracking-wider">
               {t.title}
             </div>
             {t.body && (
-              <div className="mt-1 break-words font-mono text-[10px] opacity-70">{t.body}</div>
+              <div className="mt-1 break-words font-mono text-[10px] text-[#9ba6b6]">{t.body}</div>
             )}
           </div>
         ))}
       </div>
 
+      {/* Trimmer Modal */}
       {activeClip && (
         <ClipTrimmerModal
           clip={activeClip}
@@ -1884,42 +1937,43 @@ export default function App() {
         />
       )}
 
-      {/* Clear-library confirm */}
+      {/* Clear Library Confirmation Dialog */}
       {confirmClear && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4">
           <div
-            className="animate-fade absolute inset-0 bg-[#04050c]/80 backdrop-blur-sm"
+            className="animate-fade fixed inset-0 bg-[#0d0f14]/80 backdrop-blur-sm"
             onClick={() => setConfirmClear(false)}
           />
-          <div className="animate-pop panel relative z-10 w-full max-w-sm rounded-2xl p-5">
-            <div className="font-mono text-[12px] font-semibold tracking-[0.2em] text-rose-300">
-              DELETE EVERYTHING?
+          <div className="animate-pop panel-elevated relative z-10 w-full max-w-sm rounded-xl p-5 border border-[#313a49] bg-[#171b22]">
+            <div className="font-mono text-[12px] font-semibold tracking-wider text-red-300">
+              DELETE ALL CLIPS?
             </div>
-            <p className="mt-2 text-[12px] leading-relaxed text-slate-400">
-              This permanently removes all {clips.length} clip
-              {clips.length === 1 ? "" : "s"} from the ClipFlow folder. This cannot
-              be undone.
+            <p className="mt-2 text-[12px] leading-relaxed text-[#8692a3]">
+              This permanently removes all {clips.length} clip{clips.length === 1 ? "" : "s"} from
+              the ClipFlow output folder. This operation cannot be undone.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setConfirmClear(false)}
-                className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+                className="rounded border border-[#2b3342] px-3 py-1.5 font-mono text-[11px] text-[#c3cddb] hover:text-white"
               >
-                CANCEL
+                Cancel
               </button>
               <button
+                type="button"
                 onClick={() => void clearLibrary()}
                 disabled={busy}
-                className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-rose-100 transition hover:bg-rose-500/25 disabled:opacity-50"
+                className="rounded border border-red-500/60 bg-red-500/20 px-3 py-1.5 font-mono text-[11px] font-semibold text-red-100 hover:bg-red-500/30 disabled:opacity-40"
               >
-                DELETE ALL
+                Delete All
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* First-run onboarding */}
+      {/* First-run Onboarding Dialog */}
       {onboarding && (
         <OnboardingOverlay
           hotkeySave={settings.hotkeySave}
@@ -1941,83 +1995,156 @@ export default function App() {
 /** Live view of the capture → encode → buffer → mux pipeline. */
 function PipelinePanel({ stats }: { stats: EngineStats }) {
   const armed = stats.state === "buffering" || stats.state === "flushing";
+
+  // Distinguish system audio vs microphone cleanly
+  const errLower = stats.audio_error?.toLowerCase() ?? "";
+  const isMicError = errLower.includes("microphone") || errLower.includes("mic");
+  const isSysError = errLower.includes("loopback") || errLower.includes("system audio");
+  const isGeneralAudioError = Boolean(stats.audio_error && !isMicError && !isSysError);
+
+  const audioSystemStatus = !stats.audio_system
+    ? { state: "idle" as const, label: "Disabled", detail: "Game audio loopback is disabled in settings" }
+    : (stats.audio_error && (isSysError || isGeneralAudioError))
+      ? { state: "err" as const, label: "Audio Error", detail: stats.audio_error }
+      : armed
+        ? { state: "ok" as const, label: "Capturing", detail: `48 kHz stereo · A/V drift ${stats.audio_drift_ms.toFixed(2)} ms` }
+        : { state: "idle" as const, label: "Standby", detail: "Armed and waiting for buffer" };
+
+  const audioMicStatus = !stats.audio_mic
+    ? { state: "idle" as const, label: "Disabled", detail: "Microphone recording is disabled in settings" }
+    : (stats.audio_error && (isMicError || isGeneralAudioError))
+      ? { state: "err" as const, label: "Input Error", detail: stats.audio_error }
+      : armed
+        ? { state: "ok" as const, label: "Recording", detail: "Voice mixed into AAC audio stream" }
+        : { state: "idle" as const, label: "Standby", detail: "Armed and waiting for buffer" };
+
   const stages = [
     {
       name: "DXGI Desktop Duplication",
-      detail: `${stats.width || "—"}×${stats.height || "—"} BGRA · ${stats.gpu_submit_ms_avg.toFixed(2)} ms acquire`,
-      ok: armed,
+      state: armed && stats.width > 0 ? "ok" : armed ? "warn" : "idle",
+      stateLabel: armed && stats.width > 0 ? "Active" : armed ? "Acquiring" : "Idle",
+      detail: `${stats.width || "—"}×${stats.height || "—"} BGRA · ${stats.gpu_submit_ms_avg.toFixed(2)} ms frame acquire`,
     },
     {
-      name: "D3D11 Video Processor",
-      detail: "BGRA → NV12 · GPU colour convert, zero copy",
-      ok: armed,
+      name: "D3D11 Color Pipeline",
+      state: armed ? "ok" : "idle",
+      stateLabel: armed ? "Active" : "Idle",
+      detail: "BGRA → NV12 hardware color conversion, zero memory copy",
     },
     {
-      name: `${stats.encoder.codec} hardware MFT`,
-      detail: `${stats.encoder.friendly_name} · ${stats.encode_ms_avg.toFixed(2)} ms/frame`,
-      ok: armed,
+      name: `${stats.encoder.codec} Hardware MFT`,
+      state: armed ? "ok" : "idle",
+      stateLabel: armed ? "Active" : "Idle",
+      detail: `${stats.encoder.friendly_name} · ${stats.encode_ms_avg.toFixed(2)} ms / frame`,
     },
     {
-      name: "Rolling ring buffer",
-      detail: `${formatDuration(stats.buffered_seconds)} · ${formatBytes(stats.ring_bytes)} · GOP-aligned eviction`,
-      ok: stats.ring_bytes > 0,
+      name: "Rolling RAM Buffer",
+      state: stats.ring_bytes > 0 ? "ok" : armed ? "warn" : "idle",
+      stateLabel: stats.ring_bytes > 0 ? "Buffering" : armed ? "Filling" : "Idle",
+      detail: `${formatDuration(stats.buffered_seconds)} · ${formatBytes(stats.ring_bytes)} cached · GOP keyframe eviction`,
     },
     {
-      name: "WASAPI loopback + AAC",
-      detail: stats.audio_error
-        ? `⚠ ${stats.audio_error}`
-        : stats.audio_system
-          ? `48 kHz stereo · drift ${stats.audio_drift_ms.toFixed(2)} ms`
-          : "disabled",
-      ok: stats.audio_system && armed && !stats.audio_error,
+      name: "WASAPI Game Audio (Loopback)",
+      state: audioSystemStatus.state,
+      stateLabel: audioSystemStatus.label,
+      detail: audioSystemStatus.detail,
     },
     {
-      name: "MP4 sink writer",
-      detail: "Pass-through mux on Alt+C · < 50 ms target",
-      ok: armed,
+      name: "Microphone Voice Capture",
+      state: audioMicStatus.state,
+      stateLabel: audioMicStatus.label,
+      detail: audioMicStatus.detail,
+    },
+    {
+      name: "MP4 Stream Muxer",
+      state: armed ? "ok" : "idle",
+      stateLabel: armed ? "Ready" : "Idle",
+      detail: "Pass-through muxing on Alt+C without re-encoding (< 50 ms target)",
     },
   ];
 
   return (
-    <section className="panel rounded-2xl p-4">
-      <h3 className="font-mono text-[11px] tracking-[0.24em] text-lime-300">
-        LIVE PIPELINE
-      </h3>
-      <ol className="mt-3 space-y-2.5">
+    <section className="panel rounded-xl p-4">
+      <div className="flex items-center justify-between border-b border-[#232934] pb-3">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
+          LIVE PIPELINE MONITOR
+        </h3>
+        <span
+          className={cn(
+            "rounded-full px-2 py-0.5 font-mono text-[10px] font-medium tracking-wider",
+            armed
+              ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+              : "border border-[#2b3342] bg-[#14171e] text-[#8692a3]",
+          )}
+        >
+          {armed ? "HEALTHY" : "DISARMED"}
+        </span>
+      </div>
+
+      {/* Pipeline vertical steps */}
+      <ol className="mt-3.5 space-y-3">
         {stages.map((s, i) => (
           <li key={s.name} className="flex gap-3">
             <div className="flex flex-col items-center">
               <span
                 className={cn(
-                  "mt-1 h-2 w-2 shrink-0 rounded-full transition",
-                  s.ok ? "bg-lime-400 shadow-[0_0_10px_#76ff9c]" : "bg-slate-700",
+                  "mt-1 h-2.5 w-2.5 shrink-0 rounded-full transition-colors",
+                  s.state === "ok"
+                    ? "bg-emerald-400"
+                    : s.state === "warn"
+                      ? "bg-amber-400"
+                      : s.state === "err"
+                        ? "bg-red-500"
+                        : "bg-[#455060]",
                 )}
               />
               {i < stages.length - 1 && (
                 <span
                   className={cn(
                     "mt-1 w-px flex-1",
-                    s.ok ? "bg-lime-400/30" : "bg-slate-800",
+                    s.state === "ok" ? "bg-emerald-500/25" : "bg-[#252d3a]",
                   )}
                 />
               )}
             </div>
-            <div className="min-w-0 pb-1.5">
-              <div className="text-[12px] font-medium text-slate-200">{s.name}</div>
-              <div className="truncate font-mono text-[10px] text-slate-500">{s.detail}</div>
+
+            <div className="min-w-0 pb-1 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-medium text-[#e2e7ef]">{s.name}</span>
+                <span
+                  className={cn(
+                    "font-mono text-[10px] font-medium tracking-wide",
+                    s.state === "ok"
+                      ? "text-emerald-400"
+                      : s.state === "warn"
+                        ? "text-amber-300"
+                        : s.state === "err"
+                          ? "text-red-400 font-semibold"
+                          : "text-[#627083]",
+                  )}
+                >
+                  {s.stateLabel}
+                </span>
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-[#7d8a9c] leading-relaxed">
+                {s.detail}
+              </div>
             </div>
           </li>
         ))}
       </ol>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px]">
-        <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-          <div className="tracking-[0.16em] text-slate-600">RING FRAMES</div>
-          <div className="mt-1 text-slate-200">{stats.ring_frames}</div>
+      {/* Diagnostics telemetry summary */}
+      <div className="mt-4 grid grid-cols-2 gap-2 font-mono text-[10px] border-t border-[#232934] pt-3">
+        <div className="rounded-lg border border-[#232934] bg-[#14171e] px-3 py-2">
+          <div className="text-[#687383]">RING FRAMES</div>
+          <div className="mt-0.5 text-[#e6eaf0] font-semibold">{stats.ring_frames}</div>
         </div>
-        <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-          <div className="tracking-[0.16em] text-slate-600">DEVICE RESETS</div>
-          <div className="mt-1 text-slate-200">{stats.device_resets}</div>
+        <div className="rounded-lg border border-[#232934] bg-[#14171e] px-3 py-2">
+          <div className="text-[#687383]">DEVICE RESETS</div>
+          <div className={cn("mt-0.5 font-semibold", stats.device_resets > 0 ? "text-amber-400" : "text-[#e6eaf0]")}>
+            {stats.device_resets}
+          </div>
         </div>
       </div>
     </section>
@@ -2037,58 +2164,55 @@ function OnboardingOverlay({
   const steps = [
     {
       kbd: hotkeySave,
-      title: "Save the last moments",
-      body: "Flushes the GPU-encoded ring buffer to an MP4 in under 50 ms — mid-game, without alt-tabbing.",
-      tone: "border-cyan-300/40 text-cyan-200",
+      title: "Save instant replay",
+      body: "Flushes the GPU-encoded buffer to an MP4 in under 50 ms while staying inside your game.",
     },
     {
       kbd: hotkeyToggle,
-      title: "Arm / disarm the buffer",
-      body: "Toggles the rolling history in RAM. Leave it armed while you play; it costs under 100 MB.",
-      tone: "border-lime-300/40 text-lime-200",
+      title: "Arm / disarm buffer",
+      body: "Toggles rolling memory capture. Leave it armed while playing; memory cost is under 150 MB.",
     },
     {
       kbd: "Videos\\ClipFlow",
-      title: "Everything lands in one folder",
-      body: "Clips, trims and snapshots are stored in %USERPROFILE%\\Videos\\ClipFlow. No cloud, no account.",
-      tone: "border-fuchsia-300/40 text-fuchsia-200",
+      title: "Stored in one local folder",
+      body: "Clips, trims, and snapshots are saved locally in %USERPROFILE%\\Videos\\ClipFlow.",
     },
   ];
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-      <div className="animate-fade absolute inset-0 bg-[#04050c]/92 backdrop-blur-xl" />
-      <div className="animate-pop panel noise relative z-10 w-full max-w-lg rounded-2xl p-6">
+      <div className="animate-fade fixed inset-0 bg-[#0d0f14]/85 backdrop-blur-sm" />
+      <div className="animate-pop panel-elevated relative z-10 w-full max-w-md rounded-xl p-6 border border-[#313a49] bg-[#171b22]">
         <div className="flex items-center gap-3">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-cyan-400 to-fuchsia-500 shadow-[0_0_24px_-4px_#5eeaff]">
-            <svg viewBox="0 0 24 24" className="h-5 w-5 text-black" fill="currentColor">
-              <path d="M8 5v14l11-7z" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#1e2531] text-blue-400 border border-[#2e3747]">
+            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-current">
+              <path d="M4 3.5v9l8-4.5-8-4.5z" />
             </svg>
           </div>
           <div>
-            <div className="font-mono text-sm font-semibold tracking-[0.24em] text-slate-100">
-              CLIPFLOW 1.1
+            <div className="text-[14px] font-semibold text-[#e6eaf0]">
+              Welcome to ClipFlow
             </div>
-            <div className="mt-0.5 font-mono text-[10px] tracking-[0.18em] text-slate-500">
-              INSTANT REPLAY · THREE MOVES
+            <div className="font-mono text-[11px] text-[#8692a3]">
+              Zero-bloat instant replay for Windows
             </div>
           </div>
         </div>
 
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 space-y-2.5">
           {steps.map((s, i) => (
             <div
               key={s.title}
-              className="flex items-start gap-3 rounded-xl border border-white/8 bg-black/30 p-3"
+              className="flex items-start gap-3 rounded-lg border border-[#232934] bg-[#14171e] p-3"
             >
-              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-white/15 font-mono text-[10px] text-slate-400">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#2b3342] font-mono text-[10px] text-[#8692a3]">
                 {i + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-slate-100">{s.title}</div>
-                <div className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{s.body}</div>
+                <div className="text-[13px] font-medium text-[#e2e7ef]">{s.title}</div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-[#7e8b9d]">{s.body}</div>
               </div>
-              <kbd className={cn("shrink-0 rounded border bg-black/50 px-2 py-1 font-mono text-[10px] tracking-[0.12em]", s.tone)}>
+              <kbd className="shrink-0 rounded border border-[#313a49] bg-[#1e2531] px-2 py-0.5 font-mono text-[10px] font-semibold text-[#e6eaf0]">
                 {s.kbd}
               </kbd>
             </div>
@@ -2096,10 +2220,11 @@ function OnboardingOverlay({
         </div>
 
         <button
+          type="button"
           onClick={onDismiss}
-          className="mt-5 w-full rounded-xl border border-cyan-300/50 bg-cyan-400/15 py-2.5 font-mono text-[11px] font-semibold tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-400/25"
+          className="mt-5 w-full rounded-lg border border-blue-500 bg-blue-600 py-2.5 font-mono text-[11px] font-semibold tracking-wider text-white shadow-sm transition-colors hover:bg-blue-500"
         >
-          GOT IT — START CLIPPING
+          START CLIPPING
         </button>
       </div>
     </div>

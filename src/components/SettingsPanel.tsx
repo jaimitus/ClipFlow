@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { clipflow } from "../lib/bridge";
 import type {
   AppSettings,
+  AudioDevice,
   EngineStats,
   MonitorInfo,
   PowerState,
@@ -57,9 +58,9 @@ function acceleratorFromEvent(e: KeyboardEvent): string | null {
   if (/^[a-z0-9]$/i.test(key)) token = key.toUpperCase();
   else if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(key)) token = key.toUpperCase();
   else if (key === " ") token = "Space";
-  else return null; // arrows/media keys are allowed only as bare keys → rejected below
+  else return null;
 
-  if (mods.length === 0) return null; // Windows reserves bare keys for typing
+  if (mods.length === 0) return null;
   return [...mods, token].join("+");
 }
 
@@ -81,19 +82,20 @@ function HotkeyRecorder({
   return (
     <button
       ref={ref}
+      type="button"
       onClick={onStart}
       disabled={recording}
       title="Click, then press the new key combination"
       className={cn(
-        "relative rounded-md border px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] transition",
+        "relative rounded border px-3 py-1 font-mono text-[11px] font-semibold tracking-wider transition-colors",
         recording
-          ? "animate-pulse border-lime-300/70 bg-lime-400/15 text-lime-100"
-          : "border-fuchsia-300/40 bg-fuchsia-500/10 text-fuchsia-100 hover:border-fuchsia-300/80 hover:bg-fuchsia-500/20",
+          ? "border-blue-400 bg-blue-500/20 text-blue-200"
+          : "border-[#313a49] bg-[#14171e] text-[#e6eaf0] hover:border-blue-400/60 hover:bg-[#1a202a]",
       )}
     >
       {recording ? (
         <>
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-rec rounded-full bg-lime-300 align-middle" />
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-rec rounded-full bg-blue-400 align-middle" />
           PRESS KEYS…
         </>
       ) : (
@@ -120,10 +122,27 @@ export default function SettingsPanel({
 }: Props) {
   const [bitrate, setBitrate] = useState(settings.bitrateKbps);
   const [recording, setRecording] = useState<"save" | "toggle" | null>(null);
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [scanningDevices, setScanningDevices] = useState(false);
+
+  const refreshAudioDevices = async () => {
+    setScanningDevices(true);
+    try {
+      const devs = await clipflow.getAudioInputDevices();
+      setAudioDevices(devs);
+    } catch {
+      // Best-effort device enumeration
+    } finally {
+      setScanningDevices(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshAudioDevices();
+  }, []);
 
   useEffect(() => setBitrate(settings.bitrateKbps), [settings.bitrateKbps]);
 
-  // Global key capture while a hotkey badge is in "record" mode.
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
@@ -148,457 +167,534 @@ export default function SettingsPanel({
 
   return (
     <div className="space-y-4">
-      <section className="panel rounded-2xl p-4">
-        <h3 className="font-mono text-[11px] tracking-[0.24em] text-cyan-300">
+      {/* ---------------- Capture Engine Section ---------------- */}
+      <section className="panel rounded-xl p-4">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
           CAPTURE ENGINE
         </h3>
 
-        <Row label="Rolling buffer" hint="How much history lives in RAM at all times.">
-          <div className="flex gap-1.5">
-            {BUFFER_PRESETS.map((s) => (
-              <button
-                key={s}
-                onClick={() => onChange({ bufferSeconds: s })}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
-                  settings.bufferSeconds === s
-                    ? "border-cyan-300/60 bg-cyan-400/20 text-cyan-100"
-                    : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
-                )}
-              >
-                {s >= 60 ? `${s / 60}m` : `${s}s`}
-              </button>
-            ))}
-          </div>
-        </Row>
+        <div className="mt-2.5">
+          <Row label="Buffer duration" hint="Continuous recording history kept in memory.">
+            <div className="flex gap-1">
+              {BUFFER_PRESETS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => onChange({ bufferSeconds: s })}
+                  className={cn(
+                    "rounded border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                    settings.bufferSeconds === s
+                      ? "border-blue-500 bg-blue-600 text-white font-semibold"
+                      : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
+                  )}
+                >
+                  {s >= 60 ? `${s / 60}m` : `${s}s`}
+                </button>
+              ))}
+            </div>
+          </Row>
 
-        <Row label="Target frame rate" hint="Capture is frame-paced with sub-millisecond jitter.">
-          <div className="flex gap-1.5">
-            {FPS_PRESETS.map((f) => (
-              <button
-                key={f}
-                onClick={() => onChange({ targetFps: f })}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
-                  settings.targetFps === f
-                    ? "border-lime-300/60 bg-lime-400/20 text-lime-100"
-                    : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
-                )}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-        </Row>
+          <Row label="Target frame rate" hint="Paced capture rate with sub-millisecond precision.">
+            <div className="flex gap-1">
+              {FPS_PRESETS.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => onChange({ targetFps: f })}
+                  className={cn(
+                    "rounded border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                    settings.targetFps === f
+                      ? "border-blue-500 bg-blue-600 text-white font-semibold"
+                      : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
+                  )}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </Row>
 
-        <Row
-          label="Video codec"
-          hint="HEVC (H.265) roughly halves file size. Applies after APPLY & RESTART ENGINE."
-        >
-          <div className="flex gap-1.5">
-            {(["h264", "hevc"] as const).map((c) => (
-              <button
-                key={c}
-                onClick={() => onChange({ codec: c })}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
-                  settings.codec === c
-                    ? "border-cyan-300/60 bg-cyan-400/20 text-cyan-100"
-                    : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
-                )}
-              >
-                {c === "h264" ? "H.264" : "HEVC"}
-              </button>
-            ))}
-          </div>
-        </Row>
-
-        <Row
-          label={`Bitrate — ${(bitrate / 1000).toFixed(0)} Mb/s`}
-          hint={`Projected buffer ceiling ≈ ${formatBytes(projectedRam)} of RAM.`}
-        >
-          <input
-            type="range"
-            className="cf-range w-48"
-            min={3000}
-            max={60000}
-            step={1000}
-            value={bitrate}
-            onChange={(e) => setBitrate(Number(e.target.value))}
-            onPointerUp={() => onChange({ bitrateKbps: bitrate })}
-            onKeyUp={() => onChange({ bitrateKbps: bitrate })}
-          />
-        </Row>
-
-        <Row label="Source display" hint="DXGI Desktop Duplication output.">
-          <select
-            value={settings.monitorIndex}
-            onChange={(e) => onChange({ monitorIndex: Number(e.target.value) })}
-            className="rounded-md border border-white/10 bg-black/50 px-2.5 py-1.5 font-mono text-[11px] text-slate-200 outline-none focus:border-cyan-300/50"
+          <Row
+            label="Video codec"
+            hint="HEVC halves file size on supported hardware. Requires engine restart."
           >
-            {monitors.map((m) => (
-              <option key={m.index} value={m.index} className="bg-[#0a0d1a]">
-                {m.name} · {m.width}×{m.height}
-                {m.primary ? " (primary)" : ""}
-              </option>
-            ))}
-          </select>
-        </Row>
+            <div className="flex gap-1">
+              {(["h264", "hevc"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => onChange({ codec: c })}
+                  className={cn(
+                    "rounded border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                    settings.codec === c
+                      ? "border-blue-500 bg-blue-600 text-white font-semibold"
+                      : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
+                  )}
+                >
+                  {c === "h264" ? "H.264" : "HEVC"}
+                </button>
+              ))}
+            </div>
+          </Row>
 
-        <Row label="System audio (WASAPI loopback)" hint="Captured on the same QPC clock as video.">
-          <Toggle
-            on={settings.captureSystemAudio}
-            onClick={() => onChange({ captureSystemAudio: !settings.captureSystemAudio })}
-          />
-        </Row>
+          <Row
+            label={`Bitrate: ${(bitrate / 1000).toFixed(0)} Mb/s`}
+            hint={`Buffer memory footprint ceiling: ~${formatBytes(projectedRam)}`}
+          >
+            <input
+              type="range"
+              className="cf-range w-44"
+              min={3000}
+              max={60000}
+              step={1000}
+              value={bitrate}
+              onChange={(e) => setBitrate(Number(e.target.value))}
+              onPointerUp={() => onChange({ bitrateKbps: bitrate })}
+              onKeyUp={() => onChange({ bitrateKbps: bitrate })}
+            />
+          </Row>
 
-        <Row label="Microphone" hint="Adds your voice to the mix.">
-          <Toggle
-            on={settings.captureMicrophone}
-            onClick={() => onChange({ captureMicrophone: !settings.captureMicrophone })}
-          />
-        </Row>
+          <Row label="Source display" hint="DXGI output monitor adapter.">
+            <select
+              value={settings.monitorIndex}
+              onChange={(e) => onChange({ monitorIndex: Number(e.target.value) })}
+              className="rounded border border-[#2b3342] bg-[#11141a] px-2.5 py-1.5 font-mono text-[11px] text-[#e2e7ef] outline-none focus:border-blue-400"
+            >
+              {monitors.map((m) => (
+                <option key={m.index} value={m.index} className="bg-[#111318]">
+                  {m.name} ({m.width}×{m.height}) {m.primary ? "- Primary" : ""}
+                </option>
+              ))}
+            </select>
+          </Row>
 
-        <Row label={`Game audio — ${settings.gameVolume}%`} hint="System/loopback volume in the mix. Applies live, no restart.">
-          <input
-            type="range"
-            className="cf-range w-48"
-            min={0}
-            max={100}
-            step={5}
-            value={settings.gameVolume}
-            onChange={(e) => onChange({ gameVolume: Number(e.target.value) })}
-          />
-        </Row>
+          <Row label="Game audio (WASAPI loopback)" hint="Captured in exact synchronization with video frames.">
+            <Toggle
+              on={settings.captureSystemAudio}
+              onClick={() => onChange({ captureSystemAudio: !settings.captureSystemAudio })}
+            />
+          </Row>
 
-        <Row label={`Microphone — ${settings.micVolume}%`} hint="Your voice volume in the mix. Applies live, no restart.">
-          <input
-            type="range"
-            className="cf-range w-48"
-            min={0}
-            max={100}
-            step={5}
-            value={settings.micVolume}
-            onChange={(e) => onChange({ micVolume: Number(e.target.value) })}
-          />
-        </Row>
+          {settings.captureSystemAudio && (
+            <Row label={`Game audio level: ${settings.gameVolume}%`}>
+              <input
+                type="range"
+                className="cf-range w-44"
+                min={0}
+                max={100}
+                step={5}
+                value={settings.gameVolume}
+                onChange={(e) => onChange({ gameVolume: Number(e.target.value) })}
+              />
+            </Row>
+          )}
 
-        <div className="mt-3 flex flex-wrap gap-2">
+          <Row label="Microphone capture" hint="Records your voice input into the mix.">
+            <Toggle
+              on={settings.captureMicrophone}
+              onClick={() => onChange({ captureMicrophone: !settings.captureMicrophone })}
+            />
+          </Row>
+
+          {settings.captureMicrophone && (
+            <>
+              <Row
+                label="Input device / Microphone"
+                hint="Choose which microphone ClipFlow captures into the clip audio."
+              >
+                <div className="flex items-center gap-2">
+                  <select
+                    className="max-w-[240px] truncate rounded border border-[#313a49] bg-[#14171e] px-2.5 py-1.5 font-mono text-[11px] text-[#e6eaf0] focus:border-blue-400 focus:outline-none"
+                    value={settings.micDeviceId || "default"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      onChange({ micDeviceId: val === "default" ? null : val });
+                    }}
+                  >
+                    <option value="default">
+                      Default ({audioDevices.find((d) => d.isDefault)?.name || "System Default"})
+                    </option>
+                    {audioDevices.map((dev) => (
+                      <option key={dev.id} value={dev.id}>
+                        {dev.name} {dev.isDefault ? "(Default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void refreshAudioDevices()}
+                    title="Rescan microphones"
+                    disabled={scanningDevices}
+                    className="flex h-7 w-7 items-center justify-center rounded border border-[#313a49] bg-[#14171e] text-[#8e9bb0] transition-colors hover:border-blue-400/60 hover:text-white disabled:opacity-50"
+                  >
+                    <svg
+                      className={cn("h-3.5 w-3.5", scanningDevices && "animate-spin")}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </Row>
+
+              <Row label={`Microphone level: ${settings.micVolume}%`}>
+                <input
+                  type="range"
+                  className="cf-range w-44"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={settings.micVolume}
+                  onChange={(e) => onChange({ micVolume: Number(e.target.value) })}
+                />
+              </Row>
+
+              <div className="mt-1 rounded-lg border border-[#232934] bg-[#14171e] px-3.5 py-2.5 text-[11px] text-[#8692a3] space-y-1">
+                <div className="flex items-center justify-between font-mono text-[10px] tracking-wider text-[#7e8b9d]">
+                  <span>MIC DIAGNOSTICS & PRIVACY</span>
+                  <span className={cn(stats.audio_mic ? "text-emerald-400 font-medium" : "text-[#7a8799]")}>
+                    {stats.audio_mic ? "CAPTURE ACTIVE" : "IDLE"}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#d6dbe4]">
+                  Active source:{" "}
+                  <span className="font-semibold text-white">
+                    {settings.micDeviceId
+                      ? audioDevices.find((d) => d.id === settings.micDeviceId)?.name || "Custom Device"
+                      : `Default (${audioDevices.find((d) => d.isDefault)?.name || "System Default"})`}
+                  </span>
+                </div>
+                <p className="text-[10px] text-[#717d90]">
+                  Tip: If your microphone isn't recording, check that Windows allows desktop apps in <span className="text-[#a1adb9]">Settings &gt; Privacy &amp; security &gt; Microphone</span>, or select your specific device above (e.g. WO Mic or Headset).
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="mt-3.5 flex flex-wrap gap-2 border-t border-[#232934] pt-3">
           <button
+            type="button"
             onClick={onRestartEngine}
-            className="rounded-lg border border-cyan-300/40 bg-cyan-400/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-400/20"
+            className="rounded border border-blue-500/50 bg-blue-500/15 px-3 py-1.5 font-mono text-[11px] font-semibold tracking-wider text-blue-200 transition-colors hover:bg-blue-500/25"
           >
             APPLY & RESTART ENGINE
           </button>
           <button
+            type="button"
             onClick={onSimulateDeviceLoss}
-            className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-amber-100 transition hover:bg-amber-400/20"
+            className="rounded border border-[#2b3342] bg-[#14171e] px-3 py-1.5 font-mono text-[11px] text-[#8692a3] transition-colors hover:text-white"
           >
-            TEST DEVICE-LOSS RECOVERY
+            SIMULATE DEVICE RESET
           </button>
         </div>
       </section>
 
-      <section className="panel rounded-2xl p-4">
-        <h3 className="font-mono text-[11px] tracking-[0.24em] text-lime-300">
+      {/* ---------------- Adaptive Capture (ECO) ---------------- */}
+      <section className="panel rounded-xl p-4">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
           ADAPTIVE CAPTURE (ECO)
         </h3>
 
-        <Row
-          label="ECO mode"
-          hint="On battery or low RAM the rolling buffer shrinks to 30 s live (and fps caps at 30 on the next engine start) — ClipFlow steps out of the way when the machine is under pressure, then restores itself automatically."
-        >
-          <Toggle
-            on={settings.adaptiveEco}
-            onClick={() => onChange({ adaptiveEco: !settings.adaptiveEco })}
-          />
-        </Row>
+        <div className="mt-2.5">
+          <Row
+            label="Automatic resource conservation"
+            hint="Temporarily reduces buffer size when on low battery or under physical RAM pressure."
+          >
+            <Toggle
+              on={settings.adaptiveEco}
+              onClick={() => onChange({ adaptiveEco: !settings.adaptiveEco })}
+            />
+          </Row>
 
-        {settings.adaptiveEco && (
-          <>
-            <Row
-              label={`Battery trigger — ≤ ${settings.ecoBatteryThresholdPct}%`}
-              hint="While on battery, ECO activates when the remaining charge drops to this level."
-            >
-              <input
-                type="range"
-                className="cf-range w-48"
-                min={5}
-                max={100}
-                step={5}
-                value={settings.ecoBatteryThresholdPct}
-                onChange={(e) =>
-                  onChange({ ecoBatteryThresholdPct: Number(e.target.value) })
-                }
-              />
-            </Row>
-            <Row
-              label={`RAM trigger — < ${settings.ecoRamFreeGbs} GiB free`}
-              hint="ECO activates when available physical memory drops below this threshold."
-            >
-              <input
-                type="range"
-                className="cf-range w-48"
-                min={1}
-                max={16}
-                step={1}
-                value={settings.ecoRamFreeGbs}
-                onChange={(e) => onChange({ ecoRamFreeGbs: Number(e.target.value) })}
-              />
-            </Row>
+          {settings.adaptiveEco && (
+            <>
+              <Row
+                label={`Battery trigger: ≤ ${settings.ecoBatteryThresholdPct}%`}
+                hint="Triggers ECO mode when remaining battery falls to this level."
+              >
+                <input
+                  type="range"
+                  className="cf-range w-44"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={settings.ecoBatteryThresholdPct}
+                  onChange={(e) =>
+                    onChange({ ecoBatteryThresholdPct: Number(e.target.value) })
+                  }
+                />
+              </Row>
+              <Row
+                label={`RAM trigger: < ${settings.ecoRamFreeGbs} GiB free`}
+                hint="Triggers ECO mode when system memory becomes constrained."
+              >
+                <input
+                  type="range"
+                  className="cf-range w-44"
+                  min={1}
+                  max={16}
+                  step={1}
+                  value={settings.ecoRamFreeGbs}
+                  onChange={(e) => onChange({ ecoRamFreeGbs: Number(e.target.value) })}
+                />
+              </Row>
 
-            {/* Live telemetry so the panel always shows what the machine is
-                actually doing (battery/AC + free RAM), even while ECO is off. */}
-            <div className="mt-2 rounded-xl border border-white/8 bg-black/30 px-3 py-2.5">
-              <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.14em]">
-                <span className="text-slate-500">LIVE TELEMETRY</span>
-                {power ? (
-                  <span className={cn("font-semibold", power.onBattery ? "text-amber-300" : "text-lime-300")}>
-                    {power.onBattery ? `🔋 BATTERY ${power.batteryPercent}%` : "🔌 AC POWER"}
-                  </span>
-                ) : (
-                  <span className="animate-pulse text-slate-600">READING…</span>
-                )}
+              <div className="mt-2 rounded-lg border border-[#232934] bg-[#14171e] px-3.5 py-2.5">
+                <div className="flex items-center justify-between font-mono text-[10px] tracking-wider text-[#7e8b9d]">
+                  <span>SYSTEM METRICS</span>
+                  {power ? (
+                    <span className={cn("font-medium", power.onBattery ? "text-amber-300" : "text-emerald-400")}>
+                      {power.onBattery ? `Battery ${power.batteryPercent}%` : "AC Power"}
+                    </span>
+                  ) : (
+                    <span>Reading sensors…</span>
+                  )}
+                </div>
+                <div className="mt-1 font-mono text-[11px] text-[#e2e7ef]">
+                  {power
+                    ? `${formatBytes(power.availableRamBytes)} free of ${formatBytes(power.totalRamBytes)}`
+                    : "—"}
+                </div>
               </div>
-              <div className="mt-1.5 font-mono text-[11px] text-slate-300">
-                {power
-                  ? `${formatBytes(power.availableRamBytes)} free of ${formatBytes(power.totalRamBytes)}`
-                  : "—"}
-              </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </section>
 
-      <section className="panel rounded-2xl p-4">
-        <h3 className="font-mono text-[11px] tracking-[0.24em] text-fuchsia-300">
-          WORKFLOW
+      {/* ---------------- Workflow Section ---------------- */}
+      <section className="panel rounded-xl p-4">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
+          WORKFLOW & SHORTCUTS
         </h3>
 
-        <Row label="Save hotkey" hint="Click the badge and press the new combo. Must include a modifier; works inside full-screen games.">
-          <HotkeyRecorder
-            value={settings.hotkeySave}
-            recording={recording === "save"}
-            onStart={() => setRecording("save")}
-          />
-        </Row>
+        <div className="mt-2.5">
+          <Row label="Save replay hotkey" hint="Global shortcut that works inside full-screen games.">
+            <HotkeyRecorder
+              value={settings.hotkeySave}
+              recording={recording === "save"}
+              onStart={() => setRecording("save")}
+            />
+          </Row>
 
-        <Row label="Arm / disarm hotkey" hint="Click the badge and press the new combo.">
-          <HotkeyRecorder
-            value={settings.hotkeyToggle}
-            recording={recording === "toggle"}
-            onStart={() => setRecording("toggle")}
-          />
-        </Row>
+          <Row label="Arm / disarm hotkey" hint="Toggles continuous memory buffering on or off.">
+            <HotkeyRecorder
+              value={settings.hotkeyToggle}
+              recording={recording === "toggle"}
+              onStart={() => setRecording("toggle")}
+            />
+          </Row>
 
-        <Row label="Open trimmer after save" hint="Floating quick-trim modal pops up instantly.">
-          <Toggle
-            on={settings.openTrimmerAfterSave}
-            onClick={() => onChange({ openTrimmerAfterSave: !settings.openTrimmerAfterSave })}
-          />
-        </Row>
+          <Row label="Open trimmer after saving" hint="Displays the quick-trim modal immediately upon saving.">
+            <Toggle
+              on={settings.openTrimmerAfterSave}
+              onClick={() => onChange({ openTrimmerAfterSave: !settings.openTrimmerAfterSave })}
+            />
+          </Row>
 
-        <Row label="Close to tray" hint="The buffer keeps rolling while the window is hidden.">
-          <Toggle
-            on={settings.minimizeToTray}
-            onClick={() => onChange({ minimizeToTray: !settings.minimizeToTray })}
-          />
-        </Row>
+          <Row label="Minimize to system tray" hint="Allows the application to run quietly in background.">
+            <Toggle
+              on={settings.minimizeToTray}
+              onClick={() => onChange({ minimizeToTray: !settings.minimizeToTray })}
+            />
+          </Row>
 
-        <Row label="Arm buffer at launch">
-          <Toggle
-            on={settings.autostartBuffer}
-            onClick={() => onChange({ autostartBuffer: !settings.autostartBuffer })}
-          />
-        </Row>
+          <Row label="Arm buffer on startup">
+            <Toggle
+              on={settings.autostartBuffer}
+              onClick={() => onChange({ autostartBuffer: !settings.autostartBuffer })}
+            />
+          </Row>
 
-        <Row label="Play sound on save" hint="A short shutter blip confirms Alt+C — no audio files, generated locally.">
-          <Toggle
-            on={settings.playSaveSound}
-            onClick={() => onChange({ playSaveSound: !settings.playSaveSound })}
-          />
-        </Row>
+          <Row label="Play sound on clip save" hint="Provides a quiet audio click when hotkey is triggered.">
+            <Toggle
+              on={settings.playSaveSound}
+              onClick={() => onChange({ playSaveSound: !settings.playSaveSound })}
+            />
+          </Row>
 
-        <Row label="Pin window on top" hint="Keeps the deck visible over full-screen games.">
-          <Toggle
-            on={settings.alwaysOnTop}
-            onClick={() => onChange({ alwaysOnTop: !settings.alwaysOnTop })}
-          />
-        </Row>
+          <Row label="Keep window on top" hint="Prevents the window from slipping behind game windows.">
+            <Toggle
+              on={settings.alwaysOnTop}
+              onClick={() => onChange({ alwaysOnTop: !settings.alwaysOnTop })}
+            />
+          </Row>
 
-        <Row label="Organize clips by game" hint="Saves clips into Videos/ClipFlow/<game>/ subfolders and tags them with the game in focus.">
-          <Toggle
-            on={settings.organizeByGame}
-            onClick={() => onChange({ organizeByGame: !settings.organizeByGame })}
-          />
-        </Row>
+          <Row label="Organize clips by game" hint="Groups saved clips into game-specific subfolders.">
+            <Toggle
+              on={settings.organizeByGame}
+              onClick={() => onChange({ organizeByGame: !settings.organizeByGame })}
+            />
+          </Row>
 
-        <Row label="Auto-save when a game closes" hint="When the focused game leaves the foreground, the last 30 s are saved automatically and tagged with that game.">
-          <Toggle
-            on={settings.autosaveOnGameExit}
-            onClick={() => onChange({ autosaveOnGameExit: !settings.autosaveOnGameExit })}
-          />
-        </Row>
+          <Row label="Auto-save on game exit" hint="Flushes the last 30s buffer automatically when a game is closed.">
+            <Toggle
+              on={settings.autosaveOnGameExit}
+              onClick={() => onChange({ autosaveOnGameExit: !settings.autosaveOnGameExit })}
+            />
+          </Row>
 
-        <Row label="Overlay HUD" hint="A small always-on-top indicator (● REC) appears while the buffer is armed. Click-through, never steals focus.">
-          <Toggle
-            on={settings.hudEnabled}
-            onClick={() => onChange({ hudEnabled: !settings.hudEnabled })}
-          />
-        </Row>
+          <Row label="Show HUD overlay" hint="Compact always-on-top pill showing live recording status.">
+            <Toggle
+              on={settings.hudEnabled}
+              onClick={() => onChange({ hudEnabled: !settings.hudEnabled })}
+            />
+          </Row>
 
-        <Row label="Privacy mode" hint="Pauses capture whenever the desktop or ClipFlow is focused, so the buffer only ever holds gameplay. Works with the game in the foreground (elevated games included).">
-          <Toggle
-            on={settings.privacyPauseWhenUnfocused}
-            onClick={() => onChange({ privacyPauseWhenUnfocused: !settings.privacyPauseWhenUnfocused })}
-          />
-        </Row>
+          <Row label="Privacy mode" hint="Pauses capture and clears buffer when desktop or non-game apps have focus.">
+            <Toggle
+              on={settings.privacyPauseWhenUnfocused}
+              onClick={() => onChange({ privacyPauseWhenUnfocused: !settings.privacyPauseWhenUnfocused })}
+            />
+          </Row>
 
-        <Row label="Launch at startup" hint="Starts ClipFlow hidden to tray when you sign in to Windows.">
-          <Toggle
-            on={settings.launchAtStartup}
-            onClick={() => onChange({ launchAtStartup: !settings.launchAtStartup })}
-          />
-        </Row>
+          <Row label="Launch with Windows" hint="Starts ClipFlow minimized to tray on sign-in.">
+            <Toggle
+              on={settings.launchAtStartup}
+              onClick={() => onChange({ launchAtStartup: !settings.launchAtStartup })}
+            />
+          </Row>
 
-        <Row label="Auto cleanup" hint="Deletes clips older than the chosen age at every launch to keep the folder tidy.">
-          <div className="flex gap-1.5">
-            {CLEANUP_PRESETS.map((p) => (
+          <Row label="Automatic cleanup" hint="Removes clips older than threshold at startup.">
+            <div className="flex gap-1">
+              {CLEANUP_PRESETS.map((p) => (
+                <button
+                  key={p.days}
+                  type="button"
+                  onClick={() => onChange({ autoCleanupDays: p.days })}
+                  className={cn(
+                    "rounded border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                    settings.autoCleanupDays === p.days
+                      ? "border-blue-500 bg-blue-600 text-white font-semibold"
+                      : "border-[#2b3342] bg-[#14171e] text-[#8692a3] hover:text-white",
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </Row>
+
+          <Row label="Output directory" hint={settings.outputDir}>
+            <div className="flex gap-1.5">
               <button
-                key={p.days}
-                onClick={() => onChange({ autoCleanupDays: p.days })}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 font-mono text-[11px] transition",
-                  settings.autoCleanupDays === p.days
-                    ? "border-lime-300/60 bg-lime-400/20 text-lime-100"
-                    : "border-white/10 text-slate-400 hover:border-white/25 hover:text-slate-200",
-                )}
+                type="button"
+                onClick={onOpenFolder}
+                className="rounded border border-[#2b3342] bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-[#c3cddb] hover:text-white"
               >
-                {p.label}
+                OPEN
               </button>
-            ))}
-          </div>
-        </Row>
+              <button
+                type="button"
+                onClick={onChooseFolder}
+                className="rounded border border-[#2b3342] bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-[#c3cddb] hover:text-white"
+              >
+                CHANGE
+              </button>
+            </div>
+          </Row>
 
-        <Row label="Output folder" hint={settings.outputDir}>
-          <div className="flex gap-1.5">
+          <Row label="Exit process" hint="Stops capture and closes ClipFlow completely.">
             <button
-              onClick={onOpenFolder}
-              className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
+              type="button"
+              onClick={() => void clipflow.quit()}
+              className="rounded border border-red-500/40 bg-red-500/10 px-3 py-1 font-mono text-[11px] font-medium text-red-300 hover:border-red-400 hover:bg-red-500/20"
             >
-              OPEN
+              QUIT APPLICATION
             </button>
-            <button
-              onClick={onChooseFolder}
-              className="rounded-lg border border-fuchsia-300/40 bg-fuchsia-500/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/20"
-            >
-              CHANGE
-            </button>
-          </div>
-        </Row>
-
-        <Row label="Exit application" hint="Completely stops the GPU buffer and exits process.">
-          <button
-            onClick={() => void clipflow.quit()}
-            className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-rose-200 transition hover:bg-rose-500/25"
-          >
-            QUIT CLIPFLOW
-          </button>
-        </Row>
+          </Row>
+        </div>
       </section>
 
-      <section className="panel rounded-2xl p-4">
-        <h3 className="font-mono text-[11px] tracking-[0.24em] text-fuchsia-300">
+      {/* ---------------- About & System Information ---------------- */}
+      <section className="panel rounded-xl p-4">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
           ABOUT & UPDATES
         </h3>
 
-        <Row label="Version" hint="Built on Rust + Tauri v2 — single portable binary.">
-          <span className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-[12px] tracking-[0.14em] text-slate-300">
-            v{version}
-          </span>
-        </Row>
+        <div className="mt-2.5">
+          <Row label="Version" hint="Rust native core + Tauri v2 framework.">
+            <span className="rounded border border-[#2b3342] bg-[#14171e] px-2.5 py-1 font-mono text-[11px] text-[#c3cddb]">
+              v{version}
+            </span>
+          </Row>
 
-        <Row label="Check for updates" hint="Fetches the newest GitHub release and installs it automatically — signed updates, still no background updater.">
-          <button
-            onClick={onCheckForUpdates}
-            className="rounded-lg border border-cyan-300/40 bg-cyan-400/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-400/20"
-          >
-            CHECK UPDATE
-          </button>
-        </Row>
+          <Row label="Check for updates" hint="Verifies release integrity against official signed manifest.">
+            <button
+              type="button"
+              onClick={onCheckForUpdates}
+              className="rounded border border-blue-500/40 bg-blue-500/15 px-3 py-1 font-mono text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25"
+            >
+              CHECK NOW
+            </button>
+          </Row>
 
-        {updateProgress && (
-          <div className="mt-3 space-y-1.5 rounded-lg border border-cyan-300/20 bg-cyan-400/5 px-3 py-2">
-            <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.14em] text-cyan-200">
-              <span>
-                {updateProgress.phase === "DOWNLOADING" ? "DOWNLOADING UPDATE" : updateProgress.phase}
-              </span>
-              {updateProgress.total > 0 && (
+          {updateProgress && (
+            <div className="mt-3 space-y-1.5 rounded-lg border border-[#2b3342] bg-[#14171e] px-3 py-2">
+              <div className="flex items-center justify-between font-mono text-[10px] text-[#8692a3]">
                 <span>
-                  {formatBytes(updateProgress.downloaded)} / {formatBytes(updateProgress.total)}
+                  {updateProgress.phase === "DOWNLOADING" ? "DOWNLOADING UPDATE" : updateProgress.phase}
                 </span>
+                {updateProgress.total > 0 && (
+                  <span>
+                    {formatBytes(updateProgress.downloaded)} / {formatBytes(updateProgress.total)}
+                  </span>
+                )}
+              </div>
+              {updateProgress.total > 0 && (
+                <div className="h-1 overflow-hidden rounded-full bg-[#11141a]">
+                  <div
+                    className="h-full bg-blue-500 transition-all duration-200"
+                    style={{
+                      width: `${Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)}%`,
+                    }}
+                  />
+                </div>
               )}
             </div>
-            {updateProgress.total > 0 && (
-              <div className="h-1 overflow-hidden rounded-full bg-black/40">
-                <div
-                  className="h-full bg-gradient-to-r from-cyan-400 to-fuchsia-500 transition-all duration-200"
-                  style={{
-                    width: `${Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)}%`,
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        )}
+          )}
 
-        <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[10px] text-slate-500">
-          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-            <div className="tracking-[0.16em] text-slate-600">RUNTIME</div>
-            <div className="mt-1 text-slate-300">
-              {native ? "Tauri v2 · Rust · WebView2" : "Browser preview"}
+          <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px]">
+            <div className="rounded border border-[#232934] bg-[#14171e] px-3 py-2">
+              <div className="text-[#687383]">RUNTIME</div>
+              <div className="mt-0.5 text-[#d4dae3]">
+                {native ? "Tauri v2 · Rust · WebView2" : "Browser Preview"}
+              </div>
             </div>
-          </div>
-          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-            <div className="tracking-[0.16em] text-slate-600">PROCESS RSS</div>
-            <div className="mt-1 text-slate-300">{formatBytes(stats.process_rss_bytes)}</div>
+            <div className="rounded border border-[#232934] bg-[#14171e] px-3 py-2">
+              <div className="text-[#687383]">PROCESS RSS</div>
+              <div className="mt-0.5 text-[#d4dae3]">{formatBytes(stats.process_rss_bytes)}</div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="panel rounded-2xl p-4">
-        <h3 className="font-mono text-[11px] tracking-[0.24em] text-lime-300">
-          PRIVACY & FOOTPRINT
+      {/* ---------------- Privacy & Security ---------------- */}
+      <section className="panel rounded-xl p-4">
+        <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
+          PRIVACY & INTEGRITY
         </h3>
-        <ul className="mt-3 space-y-2 text-[12px] leading-relaxed text-slate-400">
-          <li className="flex gap-2">
-            <span className="text-lime-400">✓</span> No account, no login, no cloud upload.
+        <ul className="mt-2.5 space-y-2 text-[12px] leading-relaxed text-[#8692a3]">
+          <li className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> Local-only: no user accounts, no cloud sync.
           </li>
-          <li className="flex gap-2">
-            <span className="text-lime-400">✓</span> Zero telemetry — the process never opens
-            an outbound socket.
+          <li className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> Zero telemetry: no outbound analytical sockets.
           </li>
-          <li className="flex gap-2">
-            <span className="text-lime-400">✓</span> No background updater service or
-            scheduled task.
+          <li className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> No background services or scheduled telemetry tasks.
           </li>
-          <li className="flex gap-2">
-            <span className="text-lime-400">✓</span> Single portable executable; settings live
-            in one JSON file.
+          <li className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span> Self-contained portable binary with configuration stored in JSON.
           </li>
         </ul>
-        <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px] text-slate-500">
-          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-            <div className="tracking-[0.16em] text-slate-600">RUNTIME</div>
-            <div className="mt-1 text-slate-300">
-              {native ? "Tauri v2 · Rust · WebView2" : "Browser preview"}
-            </div>
-          </div>
-          <div className="rounded-lg border border-white/5 bg-black/25 px-3 py-2">
-            <div className="tracking-[0.16em] text-slate-600">PROCESS RSS</div>
-            <div className="mt-1 text-slate-300">{formatBytes(stats.process_rss_bytes)}</div>
-          </div>
-        </div>
       </section>
     </div>
   );

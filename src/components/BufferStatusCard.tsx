@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { EngineStats } from "../lib/types";
-import { VENDOR_ACCENT, VENDOR_LABEL } from "../lib/types";
+import { VENDOR_LABEL } from "../lib/types";
 import { formatBytes, formatDuration } from "../lib/format";
 import { cn } from "../utils/cn";
 
@@ -16,18 +16,48 @@ interface Props {
 
 const STATE_META: Record<
   EngineStats["state"],
-  { label: string; tone: string; dot: string }
+  { label: string; tone: string; dot: string; desc: string }
 > = {
-  idle: { label: "BUFFER DISARMED", tone: "text-slate-400", dot: "bg-slate-500" },
-  starting: { label: "SPINNING UP", tone: "text-cyan-300", dot: "bg-cyan-400" },
-  buffering: { label: "RECORDING BUFFER", tone: "text-lime-300", dot: "bg-lime-400" },
-  flushing: { label: "FLUSHING TO DISK", tone: "text-amber-300", dot: "bg-amber-400" },
-  recovering: { label: "GPU DEVICE RESET", tone: "text-amber-300", dot: "bg-amber-400" },
-  error: { label: "ENGINE FAULT", tone: "text-rose-300", dot: "bg-rose-500" },
+  idle: {
+    label: "BUFFER DISARMED",
+    tone: "text-[#8d98a8]",
+    dot: "bg-[#556172]",
+    desc: "Memory ring buffer is inactive. Arm to start continuous replay capture.",
+  },
+  starting: {
+    label: "STARTING ENGINE",
+    tone: "text-blue-400",
+    dot: "bg-blue-400 animate-rec",
+    desc: "Allocating D3D11 staging textures and spinning up hardware encoder.",
+  },
+  buffering: {
+    label: "BUFFER RECORDING",
+    tone: "text-emerald-400",
+    dot: "bg-emerald-400",
+    desc: "Continuously encoding display frames to rolling memory buffer.",
+  },
+  flushing: {
+    label: "SAVING CLIP TO MP4",
+    tone: "text-amber-300",
+    dot: "bg-amber-400 animate-rec",
+    desc: "Muxing cached keyframes straight to output folder.",
+  },
+  recovering: {
+    label: "GPU RECOVERY IN PROGRESS",
+    tone: "text-amber-300",
+    dot: "bg-amber-400 animate-rec",
+    desc: "DXGI access lost. Reinitializing D3D11 swapchain without crash.",
+  },
+  error: {
+    label: "ENGINE FAULT",
+    tone: "text-red-400",
+    dot: "bg-red-400",
+    desc: "Capture pipeline failed. Check device status in Settings.",
+  },
 };
 
-/** Rolling sparkline of per-frame encode cost. */
-function EncodeSparkline({ value, accent }: { value: number; accent: string }) {
+/** Minimalist, crisp sparkline of per-frame encode cost. */
+function EncodeSparkline({ value }: { value: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const history = useRef<number[]>([]);
 
@@ -49,7 +79,8 @@ function EncodeSparkline({ value, accent }: { value: number; accent: string }) {
     ctx.clearRect(0, 0, w, h);
 
     const data = history.current;
-    const max = Math.max(2.5, ...data) * 1.15;
+    const max = Math.max(3.0, ...data) * 1.15;
+
     ctx.beginPath();
     data.forEach((v, i) => {
       const x = (i / Math.max(data.length - 1, 1)) * w;
@@ -57,56 +88,54 @@ function EncodeSparkline({ value, accent }: { value: number; accent: string }) {
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = accent;
+    ctx.strokeStyle = "#38bdf8";
     ctx.lineWidth = 1.5;
-    ctx.shadowColor = accent;
-    ctx.shadowBlur = 8;
     ctx.stroke();
 
     ctx.lineTo(w, h);
     ctx.lineTo(0, h);
     ctx.closePath();
-    ctx.shadowBlur = 0;
     const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, `${accent}44`);
-    grad.addColorStop(1, `${accent}00`);
+    grad.addColorStop(0, "rgba(56, 189, 248, 0.18)");
+    grad.addColorStop(1, "rgba(56, 189, 248, 0.0)");
     ctx.fillStyle = grad;
     ctx.fill();
-  }, [value, accent]);
+  }, [value]);
 
-  return <canvas ref={ref} className="h-10 w-full" />;
+  return <canvas ref={ref} className="h-8 w-full" aria-label="Encode latency sparkline" />;
 }
 
 function Metric({
   label,
   value,
   sub,
-  accent,
+  highlight,
 }: {
   label: string;
   value: string;
   sub?: string;
-  accent?: string;
+  highlight?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-black/25 px-3 py-2.5">
-      <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-slate-500">
+    <div className="rounded-lg border border-[#232934] bg-[#14171e] px-3 py-2.5">
+      <div className="font-mono text-[10px] font-medium uppercase tracking-wider text-[#7e8b9d]">
         {label}
       </div>
       <div
-        className="mt-1 font-mono text-lg leading-none font-semibold"
-        style={{ color: accent ?? "#e6ecff" }}
+        className={cn(
+          "mt-1 font-mono text-[16px] font-semibold leading-none",
+          highlight ? "text-amber-400" : "text-[#e6eaf0]",
+        )}
       >
         {value}
       </div>
-      {sub && <div className="mt-1 font-mono text-[10px] text-slate-500">{sub}</div>}
+      {sub && <div className="mt-1 text-[11px] text-[#717d8e]">{sub}</div>}
     </div>
   );
 }
 
 export default function BufferStatusCard({ stats, hotkey, busy, eco, onToggle, onSave }: Props) {
   const meta = STATE_META[stats.state];
-  const accent = VENDOR_ACCENT[stats.encoder.vendor] ?? "#5eeaff";
   const armed = stats.state === "buffering" || stats.state === "flushing";
 
   const fill = useMemo(
@@ -114,213 +143,217 @@ export default function BufferStatusCard({ stats, hotkey, busy, eco, onToggle, o
     [stats.buffered_seconds, stats.buffer_seconds],
   );
 
-  const radius = 62;
+  const radius = 60;
   const circumference = 2 * Math.PI * radius;
 
   return (
-    <section className="panel noise relative overflow-hidden rounded-2xl p-5">
-      {armed && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px overflow-hidden">
-          <div className="animate-sweep h-px w-1/3 bg-gradient-to-r from-transparent via-cyan-300 to-transparent" />
-        </div>
-      )}
-
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    <section className="panel rounded-xl p-5">
+      {/* Header with primary status and action controls */}
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#232934] pb-4">
         <div className="flex items-center gap-3">
-          <span
-            className={cn(
-              "h-2.5 w-2.5 rounded-full",
-              meta.dot,
-              armed && "animate-rec",
-            )}
-          />
+          <span className={cn("h-3 w-3 rounded-full shrink-0", meta.dot)} />
           <div>
-            <div
-              className={cn(
-                "font-mono text-sm font-semibold tracking-[0.22em]",
-                meta.tone,
+            <div className="flex items-center gap-2.5">
+              <span className={cn("font-mono text-[13px] font-semibold tracking-wider", meta.tone)}>
+                {meta.label}
+              </span>
+              {eco?.active && (
+                <span
+                  title="Adaptive capture active: rolling buffer size is scaled down to conserve resources."
+                  className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-300"
+                >
+                  ECO ({eco.reason === "battery" ? "BATTERY" : "RAM"})
+                </span>
               )}
-            >
-              {meta.label}
             </div>
             {stats.privacy_active ? (
-              <div className="mt-0.5 font-mono text-[11px] text-amber-300/90">
-                🔒 PRIVACY PAUSED — no game focused · buffer empty
+              <div className="mt-0.5 font-mono text-[11px] text-amber-400">
+                Privacy paused: desktop focused, buffer empty
               </div>
             ) : (
-              <div className="mt-0.5 font-mono text-[11px] text-slate-500">
-                {stats.width || 0}×{stats.height || 0} · {stats.target_fps} fps target ·{" "}
-                {stats.capture_fps.toFixed(0)} fps actual
+              <div className="mt-0.5 font-mono text-[11px] text-[#8692a3]">
+                {stats.width > 0 ? `${stats.width}×${stats.height}` : "Display ready"} ·{" "}
+                {stats.target_fps} fps target · {stats.capture_fps.toFixed(0)} fps live
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {eco?.active && (
-            <span
-              title="Adaptive capture: the buffer is shrunk while the machine is under pressure"
-              className="rounded-lg border border-lime-400/40 bg-lime-400/10 px-2.5 py-1.5 font-mono text-[10px] font-semibold tracking-[0.14em] text-lime-200"
-            >
-              🌿 ECO {eco.reason === "battery" ? "BATTERY" : "RAM"}
-            </span>
-          )}
+        <div className="flex items-center gap-2.5">
           <button
+            type="button"
             onClick={onToggle}
             disabled={busy}
             className={cn(
-              "no-drag rounded-lg border px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.14em] transition",
+              "rounded-lg border px-3.5 py-2 font-mono text-[11px] font-semibold tracking-wider transition-colors duration-150",
               armed
-                ? "border-rose-400/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
-                : "border-lime-400/40 bg-lime-400/10 text-lime-200 hover:bg-lime-400/20",
+                ? "border-[#3b4556] bg-[#1a202a] text-[#d4dae3] hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
+                : "border-blue-500/40 bg-blue-500/10 text-blue-300 hover:border-blue-400 hover:bg-blue-500/20",
               busy && "cursor-wait opacity-60",
             )}
           >
-            {armed ? "DISARM" : "ARM BUFFER"}
+            {armed ? "DISARM BUFFER" : "ARM BUFFER"}
           </button>
+
           <button
+            type="button"
             onClick={onSave}
             disabled={!armed || busy}
             className={cn(
-              "no-drag rounded-lg border border-cyan-300/50 bg-cyan-400/15 px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-400/25",
-              (!armed || busy) && "cursor-not-allowed opacity-40",
+              "flex items-center gap-2 rounded-lg border px-4 py-2 font-mono text-[11px] font-semibold tracking-wider transition-colors duration-150",
+              armed && !busy
+                ? "border-blue-500 bg-blue-600 text-white shadow-sm hover:bg-blue-500 hover:border-blue-400 active:bg-blue-700"
+                : "cursor-not-allowed border-[#28303d] bg-[#14171e] text-[#556172]",
             )}
           >
-            SAVE CLIP · {hotkey.toUpperCase()}
+            <span>SAVE CLIP</span>
+            <kbd className="rounded border border-white/20 bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-white/90">
+              {hotkey.toUpperCase()}
+            </kbd>
           </button>
         </div>
       </header>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[168px_1fr]">
-        {/* Rolling buffer dial */}
-        <div className="relative mx-auto grid h-[168px] w-[168px] place-items-center">
-          <svg className="absolute inset-0 -rotate-90" viewBox="0 0 160 160">
-            <circle
-              cx="80"
-              cy="80"
-              r={radius}
-              fill="none"
-              stroke="#1e2545"
-              strokeWidth="9"
-            />
-            <circle
-              cx="80"
-              cy="80"
-              r={radius}
-              fill="none"
-              stroke="url(#bufferGrad)"
-              strokeWidth="9"
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference * (1 - fill)}
-              style={{ transition: "stroke-dashoffset 220ms linear" }}
-            />
-            <defs>
-              <linearGradient id="bufferGrad" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#5eeaff" />
-                <stop offset="60%" stopColor="#76ff9c" />
-                <stop offset="100%" stopColor="#ff4fd8" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <div className="text-center">
-            <div className="font-mono text-3xl font-bold text-white text-glow-cyan">
-              {formatDuration(stats.buffered_seconds)}
+      {/* Main card body: Circular progress dial on left, telemetry and hardware on right */}
+      <div className="mt-5 grid gap-5 lg:grid-cols-[164px_1fr]">
+        {/* Rolling buffer circular dial */}
+        <div className="flex flex-col items-center justify-center rounded-lg border border-[#232934] bg-[#14171e] p-3 text-center">
+          <div className="relative grid h-[132px] w-[132px] place-items-center">
+            <svg className="absolute inset-0 -rotate-90" viewBox="0 0 140 140" aria-hidden="true">
+              <circle
+                cx="70"
+                cy="70"
+                r={radius}
+                fill="none"
+                stroke="#202632"
+                strokeWidth="8"
+              />
+              <circle
+                cx="70"
+                cy="70"
+                r={radius}
+                fill="none"
+                stroke="#38bdf8"
+                strokeWidth="8"
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={circumference * (1 - fill)}
+                style={{ transition: "stroke-dashoffset 200ms linear" }}
+              />
+            </svg>
+            <div className="text-center">
+              <div className="font-mono text-2xl font-bold tracking-tight text-[#e6eaf0]">
+                {formatDuration(stats.buffered_seconds)}
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-[#8d98a8]">
+                of {stats.buffer_seconds}s
+              </div>
             </div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">
-              of {stats.buffer_seconds}s window
-            </div>
-            <div className="mt-2 font-mono text-[10px] text-slate-500">
-              {formatBytes(stats.ring_bytes)} in RAM
-            </div>
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-[#8692a3]">
+            {formatBytes(stats.ring_bytes)} in RAM
           </div>
         </div>
 
-        {/* Telemetry */}
+        {/* Telemetry and metrics */}
         <div className="space-y-3">
-          <div className="rounded-xl border border-white/5 bg-black/25 p-3">
+          {/* Encoder Hardware Card */}
+          <div className="rounded-lg border border-[#232934] bg-[#14171e] p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: accent, boxShadow: `0 0 12px ${accent}` }}
-                />
-                <span
-                  className="font-mono text-xs font-semibold tracking-[0.14em]"
-                  style={{ color: accent }}
-                >
+                <span className="flex h-2 w-2 rounded-full bg-blue-400" />
+                <span className="font-mono text-[12px] font-semibold text-[#e6eaf0]">
                   {VENDOR_LABEL[stats.encoder.vendor]}
                 </span>
-                <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] tracking-widest text-slate-400">
-                  {stats.encoder.hardware ? "GPU" : "CPU"} · {stats.encoder.codec}
+                <span className="rounded border border-[#2f3846] bg-[#1a202a] px-1.5 py-0.5 font-mono text-[10px] text-[#8d98a8]">
+                  {stats.encoder.hardware ? "GPU HARDWARE" : "CPU SOFTWARE"} · {stats.encoder.codec}
                 </span>
               </div>
-              <span className="font-mono text-[10px] text-slate-500">
+              <span className="truncate font-mono text-[11px] text-[#717d8e]">
                 {stats.encoder.adapter_name}
               </span>
             </div>
-            <div className="mt-2 truncate font-mono text-[10px] text-slate-500">
+
+            <div className="mt-1 truncate font-mono text-[11px] text-[#8692a3]">
               {stats.encoder.friendly_name}
             </div>
-            <EncodeSparkline value={stats.encode_ms_avg} accent={accent} />
-            <div className="flex items-center justify-between font-mono text-[10px] text-slate-500">
-              <span>encode cost / frame</span>
-              <span style={{ color: accent }}>{stats.encode_ms_avg.toFixed(2)} ms</span>
+
+            <div className="mt-2">
+              <EncodeSparkline value={stats.encode_ms_avg} />
+            </div>
+
+            <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-[#8692a3]">
+              <span>Encode latency</span>
+              <span className="font-medium text-[#38bdf8]">{stats.encode_ms_avg.toFixed(2)} ms / frame</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {/* Metric cards */}
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             <Metric
-              label="RAM"
+              label="Memory"
               value={formatBytes(stats.process_rss_bytes, 0)}
-              sub={stats.state === "idle" ? "idle footprint" : "engine + ring"}
-              accent="#76ff9c"
+              sub={stats.state === "idle" ? "idle process" : "buffer + ring"}
             />
             <Metric
-              label="GPU submit"
+              label="GPU Acquire"
               value={`${stats.gpu_submit_ms_avg.toFixed(2)} ms`}
-              sub="DXGI acquire→blt"
-              accent="#5eeaff"
+              sub="acquire to blit"
             />
             <Metric
               label="Dropped"
               value={String(stats.dropped_frames)}
-              sub={`${stats.device_resets} device reset${stats.device_resets === 1 ? "" : "s"}`}
-              accent={stats.dropped_frames > 0 ? "#ffc94f" : "#e6ecff"}
+              sub={`${stats.device_resets} reset${stats.device_resets === 1 ? "" : "s"}`}
+              highlight={stats.dropped_frames > 0}
             />
             <Metric
-              label="Hotkey"
+              label="Global Hotkey"
               value={hotkey.toUpperCase()}
-              sub="global · works in-game"
-              accent="#ff4fd8"
+              sub="works in full-screen"
             />
           </div>
 
+          {/* Audio, drift, and uptime status */}
           <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
             <span
               className={cn(
-                "rounded-full border px-2.5 py-1 tracking-[0.12em]",
-                stats.audio_system
-                  ? "border-lime-400/30 bg-lime-400/10 text-lime-200"
-                  : "border-white/10 bg-white/5 text-slate-500",
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 tracking-wider",
+                stats.audio_system && !stats.audio_error
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-[#2c3543] bg-[#14171e] text-[#7e8b9d]",
               )}
             >
-              WASAPI LOOPBACK {stats.audio_system ? "ON" : "OFF"}
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  stats.audio_system && !stats.audio_error ? "bg-emerald-400" : "bg-[#556172]",
+                )}
+              />
+              GAME AUDIO {stats.audio_system ? "ON" : "OFF"}
             </span>
+
             <span
               className={cn(
-                "rounded-full border px-2.5 py-1 tracking-[0.12em]",
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 tracking-wider",
                 stats.audio_mic
-                  ? "border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200"
-                  : "border-white/10 bg-white/5 text-slate-500",
+                  ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                  : "border-[#2c3543] bg-[#14171e] text-[#7e8b9d]",
               )}
             >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  stats.audio_mic ? "bg-blue-400" : "bg-[#556172]",
+                )}
+              />
               MIC {stats.audio_mic ? "ON" : "OFF"}
             </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 tracking-[0.12em] text-slate-400">
-              A/V DRIFT {stats.audio_drift_ms.toFixed(2)} MS
+
+            <span className="rounded-full border border-[#28303d] bg-[#14171e] px-2.5 py-1 tracking-wider text-[#8692a3]">
+              A/V DRIFT {stats.audio_drift_ms.toFixed(2)} ms
             </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 tracking-[0.12em] text-slate-400">
+
+            <span className="rounded-full border border-[#28303d] bg-[#14171e] px-2.5 py-1 tracking-wider text-[#8692a3]">
               UPTIME {formatDuration(stats.uptime_seconds)}
             </span>
           </div>
@@ -328,7 +361,8 @@ export default function BufferStatusCard({ stats, hotkey, busy, eco, onToggle, o
       </div>
 
       {stats.last_error && (
-        <div className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 font-mono text-[11px] text-rose-200">
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3.5 py-2.5 font-mono text-[11px] text-red-200">
+          <span className="font-semibold text-red-100">Engine fault: </span>
           {stats.last_error}
         </div>
       )}

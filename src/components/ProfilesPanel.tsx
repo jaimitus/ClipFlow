@@ -47,24 +47,24 @@ function ProfileCard({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition",
+        "flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 transition-colors duration-150",
         active
-          ? "border-lime-300/50 bg-lime-400/10"
-          : "border-white/8 bg-black/25 hover:border-white/20",
+          ? "border-blue-500/50 bg-[#16202e]"
+          : "border-[#232934] bg-[#14171e] hover:border-[#313a49]",
       )}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 pr-2">
         <div className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-slate-100">
+          <span className="truncate text-[13px] font-medium text-[#e2e7ef]">
             {profile.name}
           </span>
           {active && (
-            <span className="rounded border border-lime-300/50 bg-lime-400/15 px-1.5 py-0.5 font-mono text-[9px] tracking-[0.14em] text-lime-200">
+            <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-blue-300">
               ACTIVE
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate font-mono text-[10px] text-slate-500">
+        <div className="mt-0.5 truncate font-mono text-[11px] text-[#7d8a9c]">
           {profile.bufferSeconds >= 60
             ? `${profile.bufferSeconds / 60}m`
             : `${profile.bufferSeconds}s`}{" "}
@@ -72,25 +72,33 @@ function ProfileCard({
           {profile.codec.toUpperCase()}
         </div>
       </div>
-      <div className="flex shrink-0 gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <button
+          type="button"
           onClick={onApply}
-          className="rounded-md border border-lime-300/40 bg-lime-400/10 px-2.5 py-1 font-mono text-[10px] tracking-[0.12em] text-lime-100 transition hover:bg-lime-400/20"
+          className={cn(
+            "rounded border px-2.5 py-1 font-mono text-[10px] font-semibold tracking-wider transition-colors",
+            active
+              ? "border-blue-500/60 bg-blue-500/20 text-blue-200 hover:bg-blue-500/30"
+              : "border-[#313a49] bg-[#1a202a] text-[#c3cddb] hover:border-blue-400 hover:text-white",
+          )}
         >
           {active ? "RE-APPLY" : "APPLY"}
         </button>
         <button
+          type="button"
           onClick={onEdit}
-          title="Edit profile"
-          className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+          title="Edit profile parameters"
+          className="rounded border border-[#313a49] bg-[#1a202a] px-2 py-1 font-mono text-[10px] text-[#8d98a8] hover:border-[#424e63] hover:text-white"
         >
           EDIT
         </button>
         <button
+          type="button"
           onClick={onDelete}
           disabled={!canDelete}
           title="Delete profile"
-          className="rounded-md border border-rose-500/30 px-2 py-1 font-mono text-[10px] text-rose-300/90 transition hover:border-rose-400/60 hover:bg-rose-500/10 disabled:opacity-30"
+          className="rounded border border-[#313a49] bg-[#1a202a] px-2 py-1 font-mono text-[10px] text-[#8d98a8] hover:border-red-400/50 hover:text-red-300 disabled:opacity-30"
         >
           ✕
         </button>
@@ -129,27 +137,27 @@ function ProfileEditor({
   };
 
   const selectCls =
-    "rounded-md border border-white/10 bg-black/50 px-2 py-1 font-mono text-[11px] text-slate-200 outline-none focus:border-lime-300/50";
+    "rounded border border-[#2b3342] bg-[#11141a] px-2 py-1 font-mono text-[11px] text-[#e2e7ef] outline-none focus:border-blue-400";
 
   return (
-    <div className="mt-2 rounded-xl border border-lime-300/25 bg-lime-400/5 p-3">
+    <div className="mt-2.5 rounded-lg border border-[#313a49] bg-[#171c24] p-3.5">
       <div className="flex items-center gap-2">
         <input
           name="profile-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Profile name"
-          className="flex-1 rounded-md border border-white/10 bg-black/50 px-2.5 py-1.5 font-mono text-[12px] text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-lime-300/50"
+          placeholder="Profile name (e.g. Competitive FPS)"
+          className="flex-1 rounded border border-[#2b3342] bg-[#11141a] px-2.5 py-1.5 font-mono text-[12px] text-[#e2e7ef] outline-none placeholder:text-[#556172] focus:border-blue-400"
         />
         {profile.id && (
-          <span className="shrink-0 font-mono text-[9px] tracking-[0.12em] text-slate-600">
+          <span className="shrink-0 font-mono text-[10px] text-[#6d798a]">
             {profile.id}
           </span>
         )}
       </div>
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-slate-500">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-[#7e8b9d]">
           BUFFER
           <select
             name="profile-buffer"
@@ -158,13 +166,14 @@ function ProfileEditor({
             className={selectCls}
           >
             {[15, 30, 60, 120, 300].map((s) => (
-              <option key={s} value={s} className="bg-[#0a0d1a]">
+              <option key={s} value={s} className="bg-[#111318]">
                 {s >= 60 ? `${s / 60}m` : `${s}s`}
               </option>
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-slate-500">
+
+        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-[#7e8b9d]">
           FPS
           <select
             name="profile-fps"
@@ -173,13 +182,14 @@ function ProfileEditor({
             className={selectCls}
           >
             {[30, 60, 120, 144].map((f) => (
-              <option key={f} value={f} className="bg-[#0a0d1a]">
+              <option key={f} value={f} className="bg-[#111318]">
                 {f}
               </option>
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-slate-500">
+
+        <label className="flex items-center gap-1.5 font-mono text-[10px] tracking-wider text-[#7e8b9d]">
           CODEC
           <select
             name="profile-codec"
@@ -187,11 +197,12 @@ function ProfileEditor({
             onChange={(e) => setCodec(e.target.value as "h264" | "hevc")}
             className={selectCls}
           >
-            <option value="h264" className="bg-[#0a0d1a]">H.264</option>
-            <option value="hevc" className="bg-[#0a0d1a]">HEVC</option>
+            <option value="h264" className="bg-[#111318]">H.264</option>
+            <option value="hevc" className="bg-[#111318]">HEVC</option>
           </select>
         </label>
-        <label className="flex items-center gap-2 font-mono text-[10px] tracking-[0.12em] text-slate-500">
+
+        <label className="flex items-center gap-2 font-mono text-[10px] tracking-wider text-[#7e8b9d]">
           <span className="w-14">{(bitrateKbps / 1000).toFixed(0)} Mb/s</span>
           <input
             type="range"
@@ -205,17 +216,19 @@ function ProfileEditor({
         </label>
       </div>
 
-      <div className="mt-3 flex justify-end gap-2">
+      <div className="mt-3.5 flex justify-end gap-2 border-t border-[#232934] pt-3">
         <button
+          type="button"
           onClick={onCancel}
-          className="rounded-lg border border-white/10 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
+          className="rounded border border-[#2b3342] px-3 py-1 font-mono text-[11px] text-[#8692a3] hover:text-white"
         >
           CANCEL
         </button>
         <button
+          type="button"
           onClick={save}
           disabled={!name.trim()}
-          className="rounded-lg border border-lime-300/50 bg-lime-400/15 px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-lime-100 transition hover:bg-lime-400/25 disabled:opacity-40"
+          className="rounded border border-blue-500 bg-blue-600 px-3 py-1 font-mono text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
         >
           SAVE PROFILE
         </button>
@@ -248,7 +261,7 @@ function MapRow({
   };
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-2">
       <input
         name="map-exe"
         value={draft}
@@ -258,9 +271,9 @@ function MapRow({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
         placeholder="game.exe"
-        className="w-28 rounded-md border border-white/10 bg-black/50 px-2.5 py-1.5 font-mono text-[11px] text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-lime-300/50"
+        className="w-32 rounded border border-[#2b3342] bg-[#11141a] px-2.5 py-1.5 font-mono text-[11px] text-[#e2e7ef] outline-none placeholder:text-[#556172] focus:border-blue-400"
       />
-      <span className="text-slate-600">→</span>
+      <span className="text-[#556172]">→</span>
       <select
         name="map-profile"
         value={entry.profileId}
@@ -268,18 +281,19 @@ function MapRow({
           const exe = draft.trim().toLowerCase();
           onChange(index, { profileId: e.target.value, ...(exe ? { exeName: exe } : {}) });
         }}
-        className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/50 px-2.5 py-1.5 font-mono text-[11px] text-slate-200 outline-none focus:border-lime-300/50"
+        className="min-w-0 flex-1 rounded border border-[#2b3342] bg-[#11141a] px-2.5 py-1.5 font-mono text-[11px] text-[#e2e7ef] outline-none focus:border-blue-400"
       >
         {profiles.map((p) => (
-          <option key={p.id} value={p.id} className="bg-[#0a0d1a]">
+          <option key={p.id} value={p.id} className="bg-[#111318]">
             {p.name}
           </option>
         ))}
       </select>
       <button
+        type="button"
         onClick={() => onRemove(index)}
         title="Remove mapping"
-        className="rounded-md border border-rose-500/30 px-2 py-1.5 font-mono text-[11px] text-rose-300/90 transition hover:border-rose-400/60 hover:bg-rose-500/10"
+        className="rounded border border-[#2b3342] bg-[#1a202a] px-2 py-1.5 font-mono text-[11px] text-[#8692a3] hover:border-red-400/50 hover:text-red-300"
       >
         ✕
       </button>
@@ -313,46 +327,47 @@ export default function ProfilesPanel({
   };
 
   return (
-    <section className="panel rounded-2xl p-4">
-      <h3 className="font-mono text-[11px] tracking-[0.24em] text-lime-300">
+    <section className="panel rounded-xl p-4">
+      <h3 className="font-mono text-[11px] font-semibold tracking-wider text-[#9aa5b5]">
         CAPTURE PROFILES
       </h3>
-      <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-        Like Spotify playlists: make a few generic profiles and map the games
-        that matter to them — everything else uses <span className="text-slate-300">Default</span>.
-        Applying a profile changes the buffer live; fps, bitrate and codec apply
-        on the next engine start.
+      <p className="mt-1 text-[12px] leading-relaxed text-[#7e8b9d]">
+        Configure presets for different games. Changes to buffer size apply live; frame rate,
+        bitrate, and codec apply on the next engine start.
       </p>
 
-      <Row
-        label="Auto-switch by foreground game"
-        hint="ClipFlow watches which window has focus and applies the mapped profile. Unmapped games and the desktop fall back to Default."
-      >
-        <Toggle
-          on={settings.autoSwitchProfiles}
-          onClick={() => onChange({ autoSwitchProfiles: !settings.autoSwitchProfiles })}
-        />
-      </Row>
+      <div className="mt-3 border-t border-[#232934]">
+        <Row
+          label="Auto-switch by focused game"
+          hint="Automatically applies the mapped preset when a matching game is detected."
+        >
+          <Toggle
+            on={settings.autoSwitchProfiles}
+            onClick={() => onChange({ autoSwitchProfiles: !settings.autoSwitchProfiles })}
+          />
+        </Row>
 
-      <Row
-        label="Detected foreground"
-        hint={foreground ? `${foreground.title}` : "Desktop or unknown window — Default applies."}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="rounded-md border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-1.5 font-mono text-[11px] tracking-[0.1em] text-cyan-100">
-            {foreground ? foreground.exe : "—"}
-          </span>
-          <button
-            onClick={onRefreshForeground}
-            title="Re-check the focused window now"
-            className="rounded-md border border-white/10 px-2 py-1.5 font-mono text-[10px] tracking-[0.12em] text-slate-300 transition hover:border-white/30 hover:text-slate-100"
-          >
-            REFRESH
-          </button>
-        </div>
-      </Row>
+        <Row
+          label="Foreground window"
+          hint={foreground ? foreground.title : "Desktop or unmapped window"}
+        >
+          <div className="flex items-center gap-2">
+            <span className="rounded border border-[#2f3846] bg-[#14171e] px-2 py-1 font-mono text-[11px] text-[#c3cddb]">
+              {foreground ? foreground.exe : "—"}
+            </span>
+            <button
+              type="button"
+              onClick={onRefreshForeground}
+              title="Re-check the focused window now"
+              className="rounded border border-[#2f3846] bg-[#14171e] px-2 py-1 font-mono text-[10px] text-[#8692a3] hover:text-white"
+            >
+              DETECT
+            </button>
+          </div>
+        </Row>
+      </div>
 
-      <div className="mt-3 space-y-2">
+      <div className="mt-3.5 space-y-2">
         {settings.profiles.map((p) => (
           <ProfileCard
             key={p.id}
@@ -378,6 +393,7 @@ export default function ProfilesPanel({
       )}
 
       <button
+        type="button"
         onClick={() =>
           setEditing({
             id: "",
@@ -388,21 +404,21 @@ export default function ProfilesPanel({
             codec: "h264",
           })
         }
-        className="mt-2 w-full rounded-lg border border-lime-300/40 bg-lime-400/10 px-3 py-2 font-mono text-[11px] tracking-[0.16em] text-lime-100 transition hover:bg-lime-400/20"
+        className="mt-3 w-full rounded-lg border border-[#2f3846] bg-[#14171e] px-3 py-2 font-mono text-[11px] font-medium tracking-wider text-[#c3cddb] transition-colors hover:border-blue-400/50 hover:bg-[#1a202a] hover:text-white"
       >
-        + NEW PROFILE
+        + NEW PRESET
       </button>
 
-      <div className="mt-4 border-t border-white/5 pt-3">
-        <div className="font-mono text-[10px] tracking-[0.2em] text-slate-500">
-          GAME MAPPINGS
+      <div className="mt-5 border-t border-[#232934] pt-3.5">
+        <div className="font-mono text-[10px] font-medium uppercase tracking-wider text-[#7e8b9d]">
+          GAME DETECTION MAPPINGS
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-          Map a foreground executable (e.g. <span className="font-mono text-slate-400">cs2.exe</span>) to
-          a profile. The exe name is shown by the Detected row above — type it
-          as-is, lowercase.
+        <p className="mt-1 text-[11px] leading-relaxed text-[#717d8e]">
+          Map an executable file name (e.g. <span className="font-mono text-[#b5c0d0]">cs2.exe</span>) to
+          a profile preset.
         </p>
-        <div className="mt-2 space-y-2">
+
+        <div className="mt-3 space-y-2">
           {settings.profileMap.map((m, i) => (
             <MapRow
               key={`${m.exeName}-${i}`}
@@ -414,10 +430,11 @@ export default function ProfilesPanel({
             />
           ))}
           <button
+            type="button"
             onClick={addMapRow}
-            className="w-full rounded-lg border border-white/10 px-3 py-2 font-mono text-[11px] tracking-[0.16em] text-slate-300 transition hover:border-lime-300/40 hover:text-lime-200"
+            className="w-full rounded border border-[#28313e] bg-[#14171e] px-3 py-1.5 font-mono text-[11px] text-[#8692a3] hover:border-[#384457] hover:text-white"
           >
-            + ADD MAPPING
+            + ADD GAME MAPPING
           </button>
         </div>
       </div>

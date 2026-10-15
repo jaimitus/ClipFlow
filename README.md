@@ -26,6 +26,7 @@
 Designed for gamers and creators who demand maximum FPS and instant clipping without background resource hogging, ClipFlow continuously records your active display into a rolling memory buffer directly on your GPU. Pressing `Alt + C` instantly flushes your buffer to an MP4 video file in **under 50 milliseconds**.
 
 > ### 🆕 What's new in **1.4.2**
+> - 🎙️ **Microphone device selection & audio sync** — select your preferred microphone device directly from Settings, with guaranteed monotonic audio/video PTS synchronization, silence injection, and crash-resilient capture streams.
 > - 🖥️ **The overlay is a control panel** — always on top of games, **draggable** with a **persisted position**, and packed with controls: **⎙ SAVE** and **▶ ARM / ■ STOP** without alt-tabbing, plus live buffered/total, resolution@fps, bitrate and a 🔒 PRIV chip.
 > - 🎞️ **GIF quality overhaul** — per-frame 256-colour palettes: GIFs keep their colours and lose the dithering dots.
 > - 🌿 **ECO simulation removed** — the live battery/RAM telemetry stays in Settings.
@@ -47,7 +48,7 @@ Designed for gamers and creators who demand maximum FPS and instant clipping wit
 - **🎞️ H.264 or HEVC (H.265):** Pick your codec; HEVC cuts storage in half while staying fully hardware-accelerated.
 - **🖥️ DXGI Desktop Duplication & Direct3D 11:** Zero-copy GPU surface acquisition at 60–144 FPS with sub-millisecond frame latency.
 - **🎯 Native Hardware Encoding MFT:** Leverages Media Foundation hardware encoders (NVIDIA NVENC, AMD AMF, Intel QSV) for near-zero CPU usage.
-- **🎙️ Synchronized WASAPI Audio Loopback:** Dual capture for system output audio and microphone, encoded to AAC-LC at 48 kHz stereo on a unified QPC clock.
+- **🎙️ Synchronized WASAPI Audio Loopback & Mic Selection:** Dual capture for system output audio and microphone, selectable audio input devices in Settings, encoded to AAC-LC at 48 kHz stereo on a unified QPC clock with monotonic sync.
 - **✂️ Keyframe Stream-Copy Trimmer:** Trim your clips instantly without re-encoding, preserving 100% video quality with zero export delay.
 - **🛡️ 100% Private & Zero Telemetry:** No user account, no login, no cloud upload, no telemetry sockets, and no background updater service. The only network call is a version probe against GitHub Releases (silent at launch, or on demand from Settings) — no analytics, no tracking.
 - **🔄 Signed Auto-Updates via GitHub Releases:** Updates are delivered through the Releases page (`latest.json` + `.sig`), checked from Settings → About & Updates and installed in one click. You stay in control — no background updater.
@@ -75,10 +76,10 @@ ClipFlow was built to eliminate the bloat, mandatory accounts, and high RAM over
 ## 🚀 Quick Start
 
 ### 1. Download & Run
-Choose your preferred flavor from the [Releases](https://github.com/jaimitus/ClipFlow/releases) page:
-- **Standalone Portable:** `ClipFlow_v1.4.2_Portable.exe` (Single executable, no installation needed)
-- **Setup Installer:** `ClipFlow_1.4.2_x64-setup.exe` (NSIS Installer)
-- **MSI Package:** `ClipFlow_1.4.2_x64_en-US.msi` (Windows Installer)
+Choose your preferred flavor from the [Latest Releases](https://github.com/drexjgobgt/ClipFlow/releases/latest) page (or view [all releases](https://github.com/drexjgobgt/ClipFlow/releases)):
+- **Standalone Portable:** [`ClipFlow_v1.4.2_Portable.exe`](https://github.com/drexjgobgt/ClipFlow/releases/latest) (Single executable, no installation needed)
+- **Setup Installer:** [`ClipFlow_1.4.2_x64-setup.exe`](https://github.com/drexjgobgt/ClipFlow/releases/latest) (NSIS Installer)
+- **MSI Package:** [`ClipFlow_1.4.2_x64_en-US.msi`](https://github.com/drexjgobgt/ClipFlow/releases/latest) (Windows Installer)
 
 > 💡 Install with the **NSIS setup** (or MSI) to get **automatic updates** — the portable exe does not self-update.
 
@@ -103,7 +104,7 @@ Saved clips are stored in `%USERPROFILE%\Videos\ClipFlow`. PNG snapshots land in
 
 ```powershell
 # Clone repository
-git clone https://github.com/jaimitus/ClipFlow.git
+git clone https://github.com/drexjgobgt/ClipFlow.git
 cd ClipFlow
 
 # Install frontend dependencies
@@ -127,5 +128,5 @@ This project is licensed under the [MIT License](LICENSE).
 ---
 
 <p align="center">
-  Developed with ❤️ by <a href="https://github.com/jaimitus">jaimitus</a>. If you find ClipFlow useful, consider <a href="https://buymeacoffee.com/jaimitus">supporting the project</a>!
+  Maintained with ❤️ by <a href="https://github.com/drexjgobgt">drexjgobgt</a> · Originally developed by <a href="https://github.com/jaimitus">jaimitus</a>. If you find ClipFlow useful, consider <a href="https://buymeacoffee.com/jaimitus">supporting the project</a>!
 </p>

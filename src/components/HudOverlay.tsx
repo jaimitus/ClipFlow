@@ -8,8 +8,7 @@ type SaveState = "idle" | "saving" | "ok" | "err";
 /**
  * The always-on-top overlay. Runs inside the dedicated transparent "hud" window
  * (index.html?hud=1) and doubles as a control panel: save a clip, arm/disarm
- * the buffer — no alt-tab needed (same behaviour as the hotkeys: the deck is
- * never raised or focused). Draggable anywhere except the buttons.
+ * the buffer. Draggable anywhere except the buttons.
  */
 export default function HudOverlay() {
   const [stats, setStats] = useState<EngineStats | null>(null);
@@ -17,7 +16,6 @@ export default function HudOverlay() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
-  // The real (possibly rebound) hotkeys, so the tooltips never lie.
   const [hotkeys, setHotkeys] = useState<{ save: string; toggle: string } | null>(null);
   const resetTimer = useRef<number | undefined>(undefined);
   const errTimer = useRef<number | undefined>(undefined);
@@ -44,19 +42,13 @@ export default function HudOverlay() {
   const mbps =
     stats && stats.bitrate_kbps > 0 ? `${Math.round(stats.bitrate_kbps / 1000)}Mb/s` : null;
 
-  // The save button is only useful (and safe) while a buffer is armed AND a
-  // game is actually being captured — with privacy active the ring is empty.
   const canSave = armed && !stats?.privacy_active;
 
   const handleSave = async () => {
-    // Not armed / privacy: the click stays silent — the hover title explains
-    // why (a real `disabled` attribute would hide that title in WebView2).
     if (!canSave || save === "saving" || toggling) return;
     setSave("saving");
     setSaveError(null);
     try {
-      // triggered_by "hud" behaves like the hotkey: the deck is never raised,
-      // no trimmer opens, and the main window still toasts the saved clip.
       await clipflow.saveInstantReplay(undefined, "hud");
       setSave("ok");
     } catch (e) {
@@ -76,8 +68,6 @@ export default function HudOverlay() {
       if (armed) {
         await clipflow.stopBuffer();
       } else {
-        // Re-arm with the persisted capture settings — exactly what the deck's
-        // toggle does; never guess from possibly-stale stats.
         const s = await clipflow.getSettings();
         await clipflow.startBuffer(s.bufferSeconds, s.targetFps);
       }
@@ -92,8 +82,6 @@ export default function HudOverlay() {
 
   return (
     <div
-      // Drag anywhere on the HUD to move it (left button only). The buttons
-      // stop propagation so a click never turns into a drag.
       onMouseDown={(e) => {
         if (e.button === 0) void clipflow.startDragging();
       }}
@@ -102,55 +90,54 @@ export default function HudOverlay() {
     >
       <div
         className={cn(
-          "flex h-[48px] items-center gap-2.5 rounded-2xl border px-4 shadow-xl",
+          "flex h-[44px] items-center gap-2.5 rounded-full border px-4 shadow-xl backdrop-blur-md transition-all duration-150",
           armed
-            ? "border-rose-400/60 bg-[#0a0a12]/90 shadow-[0_0_22px_-2px_rgba(255,70,90,0.6)]"
-            : "border-white/15 bg-[#0a0a12]/75",
+            ? "border-[#3b4759] bg-[#141820]/95 shadow-black/80"
+            : "border-[#2b3342] bg-[#11141a]/90",
         )}
       >
         <span
           className={cn(
-            "h-2.5 w-2.5 shrink-0 rounded-full",
-            armed
-              ? "animate-rec bg-rose-400 shadow-[0_0_10px_#ff4d5e]"
-              : "bg-slate-600",
+            "h-2 w-2 shrink-0 rounded-full",
+            armed ? "bg-red-500 animate-rec" : "bg-[#556172]",
           )}
         />
         <span
           className={cn(
-            "text-[13px] font-semibold tracking-[0.18em]",
-            armed ? "text-rose-100" : "text-slate-400",
+            "text-[12px] font-semibold tracking-wider",
+            armed ? "text-[#f0f4f9]" : "text-[#7e8b9d]",
           )}
         >
           {armed ? "REC" : "STANDBY"}
         </span>
 
-        <span className="text-[12px] tracking-[0.1em] text-slate-300">
-          {armed ? `${buffered}s/${total}s` : `${total}s buffer`}
+        <span className="text-[12px] text-[#8692a3]">
+          {armed ? `${buffered}s / ${total}s` : `${total}s buffer`}
         </span>
 
         {armed && res && (
           <>
-            <span className="text-[10px] text-slate-600">·</span>
-            <span className="text-[11px] tracking-[0.08em] text-slate-400">{res}</span>
+            <span className="text-[10px] text-[#4f5a6b]">·</span>
+            <span className="text-[11px] text-[#8692a3]">{res}</span>
           </>
         )}
         {armed && mbps && (
           <>
-            <span className="text-[10px] text-slate-600">·</span>
-            <span className="text-[11px] tracking-[0.08em] text-slate-400">{mbps}</span>
+            <span className="text-[10px] text-[#4f5a6b]">·</span>
+            <span className="text-[11px] text-[#8692a3]">{mbps}</span>
           </>
         )}
 
         {stats?.privacy_active && (
-          <span className="rounded-md border border-amber-300/50 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.14em] text-amber-200">
-            🔒 PRIV
+          <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-300">
+            PRIVACY
           </span>
         )}
 
-        <div className="h-5 w-px bg-white/15" />
+        <div className="h-4 w-px bg-[#2b3342]" />
 
         <button
+          type="button"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => void handleToggle()}
           aria-disabled={toggling}
@@ -161,19 +148,20 @@ export default function HudOverlay() {
               : `Arm the rolling buffer (${hotkeys?.toggle ?? "Alt+Shift+C"})`)
           }
           className={cn(
-            "rounded-lg border px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] transition",
+            "rounded border px-2.5 py-1 text-[10px] font-semibold tracking-wider transition-colors",
             toggleError
-              ? "border-rose-400/70 bg-rose-500/20 text-rose-100"
+              ? "border-red-500/40 bg-red-500/20 text-red-200"
               : armed
-                ? "border-rose-300/40 bg-rose-400/10 text-rose-100 hover:bg-rose-400/20"
-                : "border-lime-300/40 bg-lime-400/10 text-lime-100 hover:bg-lime-400/20",
+                ? "border-[#384354] bg-[#1d232e] text-[#c3cddb] hover:border-red-400 hover:text-red-300"
+                : "border-[#384354] bg-[#1d232e] text-[#c3cddb] hover:border-blue-400 hover:text-white",
             toggling && "cursor-wait opacity-60",
           )}
         >
-          {toggling ? "…" : armed ? "■ STOP" : "▶ ARM"}
+          {toggling ? "…" : armed ? "STOP" : "ARM"}
         </button>
 
         <button
+          type="button"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => void handleSave()}
           aria-disabled={!canSave}
@@ -181,21 +169,21 @@ export default function HudOverlay() {
             !armed
               ? "Arm the buffer first"
               : stats?.privacy_active
-                ? "Privacy mode: no game is focused, the ring is empty"
-                : saveError ?? `Save the last moments (${hotkeys?.save ?? "Alt+C"})`
+                ? "Privacy mode: no game is focused"
+                : saveError ?? `Save the last replay (${hotkeys?.save ?? "Alt+C"})`
           }
           className={cn(
-            "rounded-lg border px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] transition",
+            "rounded border px-2.5 py-1 text-[10px] font-semibold tracking-wider transition-colors",
             save === "ok"
-              ? "border-lime-300/70 bg-lime-400/20 text-lime-100"
+              ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-200"
               : save === "err"
-                ? "border-rose-400/70 bg-rose-500/20 text-rose-100"
+                ? "border-red-500/60 bg-red-500/20 text-red-200"
                 : !canSave || save === "saving" || toggling
-                  ? "cursor-not-allowed border-cyan-300/20 bg-cyan-400/[0.06] text-cyan-100/50"
-                  : "border-cyan-300/40 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20 active:scale-[0.97]",
+                  ? "cursor-not-allowed border-[#28313e] bg-[#14171e] text-[#556172]"
+                  : "border-blue-500 bg-blue-600 text-white hover:bg-blue-500",
           )}
         >
-          {save === "saving" ? "SAVING…" : save === "ok" ? "✓ SAVED" : save === "err" ? "✕ FAILED" : "⎙ SAVE"}
+          {save === "saving" ? "SAVING…" : save === "ok" ? "SAVED" : save === "err" ? "FAILED" : "SAVE"}
         </button>
       </div>
     </div>

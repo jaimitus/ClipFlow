@@ -89,6 +89,9 @@ pub struct Settings {
     /// Microphone volume in the mix, 0-100. Applies live.
     #[serde(default = "default_100")]
     pub mic_volume: u32,
+    /// Specific microphone device ID, or None to use system default.
+    #[serde(default)]
+    pub mic_device_id: Option<String>,
     /// Adaptive capture (ECO): on battery or under memory pressure the deck
     /// shrinks the rolling buffer live and caps the fps. Invisible when off.
     #[serde(default)]
@@ -150,6 +153,7 @@ impl Default for Settings {
             privacy_pause_when_unfocused: false,
             game_volume: 100,
             mic_volume: 100,
+            mic_device_id: None,
             adaptive_eco: false,
             eco_battery_threshold_pct: 30,
             eco_ram_free_gbs: 4,
@@ -249,6 +253,7 @@ impl Settings {
             capture_microphone: self.capture_microphone,
             game_volume: self.game_volume.clamp(0, 100),
             mic_volume: self.mic_volume.clamp(0, 100),
+            mic_device_id: self.mic_device_id.clone(),
             output_dir: PathBuf::from(&self.output_dir),
             output_subfolder: None,
         }

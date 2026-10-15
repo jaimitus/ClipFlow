@@ -774,6 +774,7 @@ pub struct SettingsPatch {
     pub privacy_pause_when_unfocused: Option<bool>,
     pub game_volume: Option<u32>,
     pub mic_volume: Option<u32>,
+    pub mic_device_id: Option<String>,
     pub adaptive_eco: Option<bool>,
     pub eco_battery_threshold_pct: Option<u32>,
     pub eco_ram_free_gbs: Option<u32>,
@@ -918,6 +919,15 @@ pub fn update_settings(
     if let Some(v) = patch.mic_volume {
         s.mic_volume = v.clamp(0, 100);
         state.engine.set_audio_volumes(s.game_volume, s.mic_volume);
+    }
+    if let Some(v) = patch.mic_device_id {
+        let clean = if v.trim().is_empty() || v == "default" {
+            None
+        } else {
+            Some(v)
+        };
+        s.mic_device_id = clean.clone();
+        state.engine.set_mic_device(clean);
     }
     if let Some(v) = patch.adaptive_eco {
         s.adaptive_eco = v;
@@ -1247,6 +1257,11 @@ pub fn apply_profile(
 #[tauri::command]
 pub fn get_monitors() -> Result<Vec<MonitorInfo>, String> {
     Ok(enumerate_monitors())
+}
+
+#[tauri::command]
+pub fn get_audio_input_devices() -> Result<Vec<crate::media::audio::AudioDevice>, String> {
+    Ok(crate::media::audio::enumerate_audio_devices())
 }
 
 #[tauri::command]
